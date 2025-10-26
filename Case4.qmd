@@ -4,5 +4,16 @@ format: html
 ---
 
 ```{r}
+#| label: packages
+
+library(tidyverse)
+library(knitr)
+
+```
+
+```{r}
+#| label: read_data
+
+
 
 ```
