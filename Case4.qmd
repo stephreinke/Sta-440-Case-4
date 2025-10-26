@@ -14,6 +14,47 @@ library(knitr)
 ```{r}
 #| label: read_data
 
+load("rootData.RData")
 
+```
+
+```{r}
+#| label: look_at_data
+
+rootData |>
+  count(root, Genotype)
+
+```
+
+```{r}
+#| label: start_EDA
+
+rootData |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(se = FALSE) +
+    facet_wrap(~ Genotype) +
+    theme_minimal()
+
+rootData |>
+  ggplot(aes(x = Midline, y = Length, color = Genotype)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(se = FALSE) +
+    facet_wrap(~ side) +
+    theme_minimal()
+
+rootData |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(se = FALSE) +
+    facet_wrap(~ root) +
+    theme_minimal()
+
+```
+
+```{r}
+#| label: t_test
+
+t.test(Length ~ side, data = subset(rootData, Genotype == "WT"))
 
 ```
