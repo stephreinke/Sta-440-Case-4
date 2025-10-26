@@ -55,6 +55,57 @@ rootData |>
 ```{r}
 #| label: t_test
 
-t.test(Length ~ side, data = subset(rootData, Genotype == "WT"))
+delta_root <- rootData |>
+  group_by(root, Genotype, side) |>
+  summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = side, values_from = mean_length) |>
+  mutate(deltaL = Outer - Inner)
+
+delta_root
+
+ggplot(delta_root, aes(x = Genotype, y = deltaL, fill = Genotype)) +
+  geom_boxplot(alpha = 0.6, width = 0.4) +
+  geom_jitter(width = 0.1, size = 3, color = "black") +
+  labs(
+    title = "Difference in Mean Cell Length (Outer - Inner) by Genotype",
+    y = expression(Delta * L[root]),
+    x = "Genotype"
+  ) +
+  theme_minimal()
+
+t_results <- rootData |>
+  group_by(root, Genotype) |>
+  summarise(
+    t_test = list(t.test(Length ~ side, data = cur_data())),
+    .groups = "drop"
+  ) |>
+  mutate(
+    p_value = sapply(t_test, \(x) x$p.value),
+    mean_diff = sapply(t_test, \(x) diff(x$estimate))  # outer - inner
+  )
+
+t_results
+
+t_summary <- t_results |>
+  group_by(Genotype) |>
+  summarise(
+    mean_delta = mean(mean_diff),
+    sd_delta = sd(mean_diff),
+    mean_p = mean(p_value),
+    sig_roots = sum(p_value < 0.05),
+    total_roots = n()
+  )
+
+t_summary
+
+ggplot(t_results, aes(x = Genotype, y = mean_diff, color = p_value < 0.05)) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Per-root Outer vs Inner Differences in Cell Length",
+    y = "Mean(Outer) - Mean(Inner)",
+    color = "Significant (p < 0.05)"
+  ) +
+  theme_minimal()
 
 ```
