@@ -109,3 +109,39 @@ ggplot(t_results, aes(x = Genotype, y = mean_diff, color = p_value < 0.05)) +
   theme_minimal()
 
 ```
+```{r}
+ggplot(rootData, aes(x = Midline, y = Length, color = side)) +
+  geom_point(alpha = 0.005) + 
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ root, scales = "free_x") +
+  theme_bw() +
+  labs(title = "Cell Length Along the Root Midline",
+       x = "Distance along root (µm)",
+       y = "Cell length (µm)",
+       color = "Side of Root")
+
+ggplot(rootData, aes(x = side, y = Length, fill = side)) +
+  geom_boxplot() +
+  facet_wrap(~ Genotype) +
+  theme_bw() +
+  labs(title = "Distribution of Cell Lengths by Genotype and Side",
+       x = "Root Side",
+       y = "Cell Length (µm)",
+       fill = "Side")
+
+ggplot(rootData, aes(x = Length, fill = side)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~ Genotype) +
+  theme_bw() +
+  labs(title = "Density of Cell Lengths by Side and Genotype",
+       x = "Cell Length (µm)",
+       y = "Density",
+       fill = "Side")
+rootData %>%
+  group_by(Genotype, side) %>%
+  summarize(mean_length = mean(Length, na.rm = TRUE),
+            sd_length = sd(Length, na.rm = TRUE),
+            n = n())
+
+```
+
