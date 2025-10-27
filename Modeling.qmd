@@ -12,439 +12,6 @@ library(MASS)   # for mvrnorm in bootstrap
 ```
 
 ```{r}
-# create sensible starting values for 4PL
-start_vals_4pl <- function(x, y) {
-  Lmin <- quantile(y, 0.05, na.rm=TRUE)
-  Lmax <- quantile(y, 0.95, na.rm=TRUE)
-  xmid <- median(x, na.rm=TRUE)
-  # rough slope-based scale: change in x over IQR in y
-  dx <- diff(quantile(x, c(0.25, 0.75), na.rm=TRUE))
-  dy <- diff(quantile(y, c(0.25, 0.75), na.rm=TRUE))
-  s <- ifelse(dx == 0,  (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10,
-              dx * ( (Lmax-Lmin) / (dy + 1e-6) ) )
-  # fallbacks
-  s <- ifelse(is.na(s) | s==0, (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10, s)
-  list(Lmin = as.numeric(Lmin), Lmax = as.numeric(Lmax), xmid = as.numeric(xmid), s = as.numeric(s))
-}
-
-# Fit nls 4-parameter logistic with safe tryCatch
-fit_4pl_nls <- function(df) {
-  x <- df$Midline
-  y <- df$Length
-  st <- start_vals_4pl(x,y)
-  formula_4pl <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s))
-  ctrl <- nls.control(maxiter = 400, tol = 1e-6, minFactor = 1/1024)
-  fit <- tryCatch(
-    nls(formula_4pl, data = df, start = st, control = ctrl, trace = FALSE),
-    error = function(e) {
-      # attempt simpler starting values if first failed
-      st2 <- list(Lmin = min(y, na.rm=TRUE), Lmax = max(y, na.rm=TRUE), xmid = mean(x, na.rm=TRUE), s = (max(x)-min(x))/20)
-      tryCatch(nls(formula_4pl, data = df, start = st2, control = ctrl),
-               error = function(e2) NULL)
-    }
-  )
-  return(fit)
-}
-
-```
-
-```{r}
-# assume rootData is loaded and columns: Midline, Length, side, root, Genotype
-rootData <- rootData %>%
-  mutate(root = as.factor(root), side = as.factor(side))
-
-# fit per root × side
-fits <- list()
-groups <- rootData %>% group_by(root, side) %>% group_split()
-
-for (g in groups) {
-  id <- paste0(unique(g$root), "_", unique(g$side))
-  f <- fit_4pl_nls(g)
-  fits[[id]] <- list(fit = f, data = g)
-}
-# quick summary of failed fits
-failed <- names(fits)[sapply(fits, function(x) is.null(x$fit))]
-if (length(failed) > 0) message("Failed fits (inspect data or starting values): ", paste(failed, collapse=", "))
-
-```
-
-```{r}
-coef_table <- lapply(names(fits), function(id) {
-  obj <- fits[[id]]
-  if (is.null(obj$fit)) return(tibble(id = id, root = sub("_.*","",id), side = sub(".*_","",id), failed = TRUE))
-  cf <- coef(obj$fit)
-  tibble(id = id, root = sub("_.*","",id), side = sub(".*_","",id),
-         Lmin = cf["Lmin"], Lmax = cf["Lmax"], xmid = cf["xmid"], s = cf["s"], failed = FALSE)
-}) %>% bind_rows()
-print(coef_table)
-
-```
-
-```{r}
-# helper to get predicted curve frame from fit
-pred_df_from_fit <- function(fit_obj, xseq = NULL, n = 200) {
-  if (is.null(fit_obj$fit)) return(NULL)
-  d <- fit_obj$data
-  if (is.null(xseq)) xseq <- seq(min(d$Midline, na.rm=TRUE), max(d$Midline, na.rm=TRUE), length.out = n)
-  cf <- coef(fit_obj$fit)
-  yhat <- cf["Lmin"] + (cf["Lmax"] - cf["Lmin"])/(1 + exp(-(xseq - cf["xmid"])/cf["s"]))
-  data.frame(Midline = xseq, Length = yhat, root = unique(d$root), side = unique(d$side))
-}
-
-# combine predictions
-preds <- bind_rows(lapply(fits, pred_df_from_fit))
-# combine with observed
-obs <- rootData
-
-# plot: full grid with bigger panels (use ncol small to enlarge)
-p_all <- ggplot() +
-  geom_point(data = obs, aes(x = Midline, y = Length, color = side), size = 1.8, alpha = 0.8) +
-  geom_line(data = preds, aes(x = Midline, y = Length, color = side), size = 1.1) +
-  facet_wrap(~ root, scales = "free_x", ncol = 3) +
-  theme_bw(base_size = 14) +
-  labs(title = "Cell length vs Midline with 4PL fits", x = "Midline (µm)", y = "Cell length (µm)")
-
-print(p_all)
-# Save large image:
-ggsave("cell_length_4pl_fits.png", p_all, width = 14, height = 18, dpi = 300)
-
-```
-
-```{r}
-param_wide <- coef_table %>%
-  filter(!failed) %>%
-  select(root, side, Lmin, Lmax, xmid, s) %>%
-  pivot_wider(names_from = side, values_from = c(Lmin, Lmax, xmid, s), names_sep = "_") %>%
-  mutate(outer_minus_inner_Lmax = Lmax_Outer - Lmax_Inner,
-         outer_minus_inner_Lmin = Lmin_Outer - Lmin_Inner,
-         outer_minus_inner_range = (Lmax_Outer - Lmin_Outer) - (Lmax_Inner - Lmin_Inner))
-
-param_wide %>% arrange(desc(outer_minus_inner_Lmax)) %>% print(n = Inf)
-
-```
-
-```{r}
-bootstrap_fit_ci <- function(fit_obj, nboot = 500) {
-  if (is.null(fit_obj$fit)) return(NULL)
-  cf <- coef(fit_obj$fit)
-  vc <- tryCatch(vcov(fit_obj$fit), error = function(e) NULL)
-  if (is.null(vc)) return(NULL)
-  draws <- mvrnorm(nboot, mu = cf, Sigma = vc)
-  # prepare x grid
-  d <- fit_obj$data
-  xseq <- seq(min(d$Midline, na.rm=TRUE), max(d$Midline, na.rm=TRUE), length.out = 150)
-  ymat <- apply(draws, 1, function(par) {
-    Lmin <- par["Lmin"]; Lmax <- par["Lmax"]; xmid <- par["xmid"]; s <- par["s"]
-    Lmin + (Lmax - Lmin)/(1 + exp(-(xseq - xmid)/s))
-  })
-  y_mean <- rowMeans(ymat)
-  y_lower <- apply(ymat, 1, quantile, probs = 0.025)
-  y_upper <- apply(ymat, 1, quantile, probs = 0.975)
-  data.frame(Midline = xseq, y_mean = y_mean, y_lo = y_lower, y_hi = y_upper,
-             root = unique(d$root), side = unique(d$side))
-}
-
-# example: bootstrap for a particular root-side
-example_id <- names(fits)[which(!sapply(fits, function(x) is.null(x$fit)))[1]]
-ci_df <- bootstrap_fit_ci(fits[[example_id]], nboot = 800)
-head(ci_df)
-
-```
-
-```{r}
-# Required packages
-library(nlme)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(nlme)
-
-# --- 0. assume `rootData` is in your workspace with columns:
-# Midline (numeric), Length (numeric), root (factor/character), side (factor with "Inner"/"Outer"),
-# Genotype (factor with "WT"/"MU")
-
-rootData <- rootData %>%
-  mutate(root = as.factor(root),
-         side = factor(side, levels = c("Inner","Outer")),
-         Genotype = as.factor(Genotype))
-
-# --- 1. Define the 4PL function for nlme model formula
-# Length = Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid)/s))
-nlme_model_formula <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(- (Midline - xmid)/s))
-
-# --- 2. Helper: compute starting values per root×side via nls (as in Step 2 earlier)
-start_vals_4pl <- function(x, y) {
-  Lmin <- quantile(y, 0.05, na.rm=TRUE)
-  Lmax <- quantile(y, 0.95, na.rm=TRUE)
-  xmid <- median(x, na.rm=TRUE)
-  dx <- diff(quantile(x, c(0.25, 0.75), na.rm=TRUE))
-  dy <- diff(quantile(y, c(0.25, 0.75), na.rm=TRUE))
-  s <- ifelse(dx == 0,  (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10,
-              dx * ((Lmax-Lmin)/(dy + 1e-6)))
-  s <- ifelse(is.na(s) | s==0, (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10, s)
-  list(Lmin = as.numeric(Lmin), Lmax = as.numeric(Lmax), xmid = as.numeric(xmid), s = as.numeric(s))
-}
-
-fit_nls_safe <- function(df) {
-  st <- start_vals_4pl(df$Midline, df$Length)
-  form <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(- (Midline - xmid)/s))
-  control <- nls.control(maxiter = 400, tol = 1e-6, warnOnly = TRUE)
-  fit <- tryCatch(nls(form, data = df, start = st, control = control), error = function(e) NULL)
-  fit
-}
-
-# compute per root×side fits
-group_fits <- rootData %>%
-  group_by(root, side, Genotype) %>%
-  group_map(~{
-    df <- .x
-    fit <- fit_nls_safe(df)
-    if(is.null(fit)) {
-      tib <- tibble(root = unique(df$root), side = unique(df$side), Genotype = unique(df$Genotype),
-                    Lmin = NA_real_, Lmax = NA_real_, xmid = NA_real_, s = NA_real_, ok = FALSE)
-    } else {
-      cf <- coef(fit)
-      tib <- tibble(root = unique(df$root), side = unique(df$side), Genotype = unique(df$Genotype),
-                    Lmin = cf["Lmin"], Lmax = cf["Lmax"], xmid = cf["xmid"], s = cf["s"], ok = TRUE)
-    }
-    tib
-  }) %>% bind_rows()
-
-# inspect failures
-filter(group_fits, !ok)
-
-# --- 3. Build starting values for the fixed effects in nlme
-# We'll start fixed effects at the mean parameter values by Genotype × Side,
-# then use the grand means in case of missing cells.
-group_means <- group_fits %>%
-  filter(ok) %>%
-  group_by(Genotype, side) %>%
-  summarise_at(vars(Lmin, Lmax, xmid, s), mean, na.rm = TRUE) %>%
-  ungroup()
-
-# If any Genotype×side missing, fill with grand mean
-grand_means <- group_fits %>%
-  filter(ok) %>%
-  summarise_at(vars(Lmin, Lmax, xmid, s), mean, na.rm=TRUE)
-
-# Construct starting named vector for fixed effects assuming model: parameter ~ Genotype*side
-# nlme expects initial values for each *parameter's* fixed-effect coefficients.
-# For simplicity, we'll fit fixed effects with main effects only (Genotype + side + interaction optionally).
-# Start by making baseline intercept = mean for WT Inner, and add differences for other levels.
-
-# choose reference levels: Genotype WT, side Inner
-ref <- group_means %>% filter(Genotype == levels(rootData$Genotype)[1], side == "Inner")
-if(nrow(ref)==0) ref_vals <- grand_means else ref_vals <- ref
-
-# compute simple contrasts (Genotype effect: MU - WT; side effect: Outer - Inner)
-get_start_coefs <- function(param) {
-  intercept <- as.numeric(ref_vals[[param]])
-  # genotype effect (MU - WT)
-  gen_eff <- NA
-  if(any(group_means$Genotype != levels(rootData$Genotype)[1])) {
-    other <- group_means %>% filter(Genotype != levels(rootData$Genotype)[1], side == "Inner")
-    if(nrow(other)>0) gen_eff <- as.numeric(other[[param]]) - intercept else gen_eff <- 0
-  } else gen_eff <- 0
-  # side effect (Outer - Inner) for WT
-  side_eff <- NA
-  other_side <- group_means %>% filter(Genotype == levels(rootData$Genotype)[1], side == "Outer")
-  if(nrow(other_side)>0) side_eff <- as.numeric(other_side[[param]]) - intercept else side_eff <- 0
-  # interaction (Genotype:side) start 0
-  c(intercept = intercept, gen = gen_eff, side = side_eff, int = 0)
-}
-
-# create starting named vector for all parameters
-st_Lmin <- get_start_coefs("Lmin")
-st_Lmax <- get_start_coefs("Lmax")
-st_xmid <- get_start_coefs("xmid")
-st_s <- get_start_coefs("s")
-
-start_fixed <- c(Lmin = st_Lmin["intercept"],
-                 Lmin.Gen = st_Lmin["gen"],
-                 Lmin.Side = st_Lmin["side"],
-                 Lmin.Gen.Side = st_Lmin["int"],
-                 Lmax = st_Lmax["intercept"],
-                 Lmax.Gen = st_Lmax["gen"],
-                 Lmax.Side = st_Lmax["side"],
-                 Lmax.Gen.Side = st_Lmax["int"],
-                 xmid = st_xmid["intercept"],
-                 xmid.Gen = st_xmid["gen"],
-                 xmid.Side = st_xmid["side"],
-                 xmid.Gen.Side = st_xmid["int"],
-                 s = st_s["intercept"],
-                 s.Gen = st_s["gen"],
-                 s.Side = st_s["side"],
-                 s.Gen.Side = st_s["int"]
-                 )
-
-# --- 4. Fit nlme
-# We'll parameterize each parameter as linear predictor in Genotype*side:
-# e.g. Lmin_ij = Lmin + Lmin.Gen*(Genotype == MU) + Lmin.Side*(Side == Outer) + Lmin.Gen.Side*(MU*Outer) + b_{r,Lmin}
-
-# To do this, we define self-starting mapping in the model call via "fixed = Lmin + Lmax + xmid + s ~ Genotype*side"
-# and provide the start list as numeric vector for the fixed effects coefficients.
-
-# For random effects, allow random intercepts on each parameter across roots
-# (pdDiag assumes parameters' random effects uncorrelated; use pdSymm to allow covariance)
-
-nlme_fit <- nlme(
-  model = nlme_model_formula,
-  fixed = Lmin + Lmax + xmid + s ~ Genotype * side,       # allows genotype × side differences
-  random = pdDiag(Lmin + Lmax + xmid + s ~ 1),             # random effect on each parameter by root
-  groups = ~ root,
-  data = rootData,
-  start = start_fixed,
-  control = nlmeControl(maxIter = 200, msMaxIter = 200, pnlsMaxIter = 50, returnObject = TRUE)
-)
-
-# --- 5. Inspect results
-summary(nlme_fit)
-intervals(nlme_fit)  # CIs for fixed effects & variance components
-# Extract the fixed-effect parameter estimates for the four curve parameters
-fixed_pars <- fixef(nlme_fit)
-fixed_pars
-
-# --- 6. Predictions: get predicted curves per Genotype×side
-new_grid <- expand.grid(
-  Midline = seq(min(rootData$Midline), max(rootData$Midline), length.out = 200),
-  Genotype = levels(rootData$Genotype),
-  side = levels(rootData$side)
-)
-new_grid$pred <- predict(nlme_fit, newdata = new_grid, level = 0) # level=0 fixed effects only
-
-ggplot() +
-  geom_point(data = rootData, aes(x = Midline, y = Length, color = side), alpha = 0.4, size = 1) +
-  geom_line(data = new_grid, aes(x = Midline, y = pred, color = side), size = 1.1) +
-  facet_wrap(~ Genotype) + theme_bw() + labs(title = "NLME predicted curves (fixed-effects)")
-
-# --- 7. Testing inner vs outer differences at the fixed-effects level
-# For example, compute predicted difference Outer - Inner at a chosen Midline (or average across window)
-mid_check <- quantile(rootData$Midline, probs = 0.5)
-pred_inner <- predict(nlme_fit, newdata = data.frame(Midline = mid_check, Genotype = "WT", side = "Inner"), level = 0)
-pred_outer <- predict(nlme_fit, newdata = data.frame(Midline = mid_check, Genotype = "WT", side = "Outer"), level = 0)
-pred_outer - pred_inner  # positive => outer > inner at median midline for WT
-
-# You can repeat for Genotype = "MU", or compute difference curves across Midline grid
-
-# --- 8. Root-level random effects: check variability among roots
-ranef(nlme_fit)  # random deviations per root on each parameter
-
-```
-```{r}
-# REQUIRED PACKAGES
-library(nlme)
-library(dplyr)
-library(ggplot2)
-
-# ============
-# 0. Check data & canonicalize columns (only uses rootData)
-# ============
-if(!exists("rootData")) stop("rootData not found. Load your data frame as 'rootData'.")
-
-# tolerant column lookup (case-insensitive)
-cols <- tolower(names(rootData))
-get_col <- function(x) {
-  ix <- match(tolower(x), cols)
-  if(is.na(ix)) stop("Required column '", x, "' not found in rootData.")
-  names(rootData)[ix]
-}
-MidCol <- get_col("Midline")
-LenCol <- get_col("Length")
-SideCol <- get_col("side")
-RootCol <- get_col("root")
-GenCol  <- get_col("Genotype")
-
-rootData <- rootData %>%
-  rename(Midline = !!sym(MidCol),
-         Length  = !!sym(LenCol),
-         side    = !!sym(SideCol),
-         root    = !!sym(RootCol),
-         Genotype= !!sym(GenCol)) %>%
-  mutate(root = as.factor(root),
-         side = as.factor(side),
-         Genotype = as.factor(Genotype))
-
-# quick sanity
-cat("Rows:", nrow(rootData), "Roots:", nlevels(rootData$root), "Genotypes:", paste(levels(rootData$Genotype), collapse=", "), "\n")
-
-# ============
-# 1. Model formula (4PL)
-# ============
-# Length = Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid) / s))
-nlme_form <- Length ~ Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid) / s))
-
-# ============
-# 2. Robust starting values computed from whole dataset (fast, stable)
-# ============
-Lmin0 <- as.numeric(quantile(rootData$Length, 0.05, na.rm=TRUE))
-Lmax0 <- as.numeric(quantile(rootData$Length, 0.95, na.rm=TRUE))
-xmid0 <- as.numeric(median(rootData$Midline, na.rm=TRUE))
-s0    <- as.numeric((max(rootData$Midline, na.rm=TRUE) - min(rootData$Midline, na.rm=TRUE)) / 10)
-
-# nlme expects start values for the intercepts of each parameter; give contrasts 0 to start
-start_simple <- c(Lmin = Lmin0, Lmax = Lmax0, xmid = xmid0, s = s0,
-                  Lmin.Genotype = 0, Lmax.Genotype = 0, xmid.Genotype = 0, s.Genotype = 0,
-                  Lmin.side = 0, Lmax.side = 0, xmid.side = 0, s.side = 0)
-
-# ============
-# 3. Fit conservative nlme (random effects only on Lmax to improve stability)
-#    - fixed effects: Lmin,Lmax,xmid,s ~ Genotype + side
-#    - random effects: pdDiag(Lmax ~ 1) by root (simple)
-# ============
-fit_try <- try({
-  nlme_fit <- nlme(model = nlme_form,
-                   fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                   random = pdDiag(Lmax ~ 1),      # random on Lmax only (robust start)
-                   groups = ~ root,
-                   data = rootData,
-                   start = start_simple,
-                   control = nlmeControl(maxIter = 200, pnlsMaxIter = 50))
-}, silent = TRUE)
-
-# If first attempt errors (non-pos-def, etc.), try random on Lmin+Lmax (still diagonal)
-if(inherits(fit_try, "try-error")) {
-  message("First nlme attempt failed; trying random = pdDiag(Lmin + Lmax ~ 1)...")
-  nlme_fit <- nlme(model = nlme_form,
-                   fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                   random = pdDiag(Lmin + Lmax ~ 1),
-                   groups = ~ root,
-                   data = rootData,
-                   start = start_simple,
-                   control = nlmeControl(maxIter = 200, pnlsMaxIter = 50))
-}
-
-# ============
-# 4. Show concise results
-# ============
-print(summary(nlme_fit))
-cat("\nVariance components:\n"); print(VarCorr(nlme_fit))
-
-# ============
-# 5. Quick test: Outer - Inner at median Midline per genotype (fixed-effect prediction)
-# ============
-mid_med <- median(rootData$Midline, na.rm=TRUE)
-for (g in levels(rootData$Genotype)) {
-  pred_in  <- predict(nlme_fit, newdata = data.frame(Midline = mid_med, Genotype = g, side = levels(rootData$side)[1]), level = 0)
-  pred_out <- predict(nlme_fit, newdata = data.frame(Midline = mid_med, Genotype = g, side = levels(rootData$side)[2]), level = 0)
-  cat("Genotype:", g, "Outer - Inner at Midline =", round(mid_med,1), " => ", round(pred_out - pred_in, 4), "\n")
-}
-
-# ============
-# 6. Plot data + fixed-effect fitted curves
-# ============
-pred_grid <- expand.grid(Midline = seq(min(rootData$Midline), max(rootData$Midline), length.out = 200),
-                         Genotype = levels(rootData$Genotype),
-                         side = levels(rootData$side),
-                         stringsAsFactors = FALSE)
-pred_grid$pred <- predict(nlme_fit, newdata = pred_grid, level = 0)
-ggplot(rootData, aes(x = Midline, y = Length, color = side)) +
-  geom_point(alpha = 0.35, size = 1.3) +
-  geom_line(data = pred_grid, aes(x = Midline, y = pred, color = side), size = 1.1) +
-  facet_wrap(~ Genotype) + theme_bw() +
-  labs(title = "NLME: observed + fixed-effect fitted 4PL curves")
-
-```
-```{r}
 library(nlme)
 library(dplyr)
 
@@ -489,31 +56,80 @@ if(inherits(nls_list, "try-error")) {
 
 ```
 ```{r}
-# only run if nls_list succeeded
-if(exists("nls_list") && !inherits(nls_list, "try-error")) {
-  # fit nlme with random effects on Lmax only (very conservative)
-  nlme_try1 <- try(nlme(nls_list,
-                        fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                        random = pdDiag(Lmax ~ 1),   # random only on Lmax to avoid singularity
-                        data = rootData,
-                        control = nlmeControl(maxIter=200, pnlsMaxIter=50)),
-                   silent = TRUE)
+library(nlme)
+library(dplyr)
+library(ggplot2)
 
-  if(inherits(nlme_try1, "try-error")) {
-    message("nlme with random Lmax failed; trying random on Lmin + Lmax")
-    nlme_try2 <- try(nlme(nls_list,
-                          fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                          random = pdDiag(Lmin + Lmax ~ 1),
-                          data = rootData,
-                          control = nlmeControl(maxIter=200, pnlsMaxIter=50)),
-                     silent = TRUE)
-    print(nlme_try2)
+# assume nls_list exists (from nlsList(... | root)) and rootData exists
+# first inspect nls_list
+summary(nls_list)
+
+# 1. Try nlme using the nlsList object as start (random on Lmax only; very conservative)
+nlme_try1 <- try(nlme(nls_list,
+                      fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
+                      random = pdDiag(Lmax ~ 1),
+                      data = rootData,
+                      control = nlmeControl(maxIter = 200, pnlsMaxIter = 50)),
+                 silent = TRUE)
+
+if(!inherits(nlme_try1, "try-error")) {
+  nlme_fit <- nlme_try1
+  message("nlme succeeded: random on Lmax")
+} else {
+  message("nlme with random on Lmax failed. Trying random on Lmin + Lmax")
+  nlme_try2 <- try(nlme(nls_list,
+                        fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
+                        random = pdDiag(Lmin + Lmax ~ 1),
+                        data = rootData,
+                        control = nlmeControl(maxIter = 200, pnlsMaxIter = 50)),
+                   silent = TRUE)
+  if(!inherits(nlme_try2, "try-error")) {
+    nlme_fit <- nlme_try2
+    message("nlme succeeded: random on Lmin + Lmax")
   } else {
-    print(summary(nlme_try1))
+    stop("Both nlme attempts failed. Paste the nlme error output and I'll help.")
   }
 }
 
+# 2. Inspect fit
+summary(nlme_fit)
+VarCorr(nlme_fit)
+intervals(nlme_fit)   # confidence intervals for fixed effects & variance components
+
+# 3. Predicted curves (fixed-effects) for plotting and computing differences
+mid_grid <- seq(min(rootData$Midline), max(rootData$Midline), length.out = 200)
+pred_grid <- expand.grid(Midline = mid_grid,
+                         Genotype = levels(rootData$Genotype),
+                         side = levels(rootData$side),
+                         stringsAsFactors = FALSE)
+pred_grid$pred <- predict(nlme_fit, newdata = pred_grid, level = 0)   # fixed-effect predictions
+
+# plot
+ggplot(rootData, aes(x = Midline, y = Length, color = side)) +
+  geom_point(alpha = 0.25, size = 1.2) +
+  geom_line(data = pred_grid, aes(x = Midline, y = pred, color = side), size = 1.1) +
+  facet_wrap(~ Genotype) + theme_bw() +
+  labs(title = "NLME fixed-effect fitted curves")
+
+# 4. Compute Outer - Inner predicted difference at representative midline values
+mid_vals <- quantile(rootData$Midline, probs = c(0.25, 0.5, 0.75))
+for(g in levels(rootData$Genotype)) {
+  for(m in mid_vals) {
+    p_in  <- predict(nlme_fit, newdata = data.frame(Midline = m, Genotype = g, side = levels(rootData$side)[1]), level = 0)
+    p_out <- predict(nlme_fit, newdata = data.frame(Midline = m, Genotype = g, side = levels(rootData$side)[2]), level = 0)
+    cat("Genotype:", g, "Midline:", round(m,1), "Outer-Inner =", round(p_out - p_in,3), "\n")
+  }
+}
+
+# 5. Test whether Side and Genotype:Side matter at fixed-effect level:
+#    Compare full fixed model vs model without side (or without interaction) using anova()
+nlme_no_side <- update(nlme_fit, fixed = Lmin + Lmax + xmid + s ~ Genotype)   # drop side
+anova(nlme_fit, nlme_no_side)   # LRT for adding side
+# similarly test genotype:side interaction by fitting fixed = ~ Genotype + side (if you have interaction in fitted model, compare with smaller model)
+
 ```
+
+
 
 
 
