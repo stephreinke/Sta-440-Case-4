@@ -1,0 +1,159 @@
+---
+title: "Modeling"
+format: html
+---
+
+```{r}
+# packages
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(MASS)   # for mvrnorm in bootstrap
+```
+
+```{r}
+# create sensible starting values for 4PL
+start_vals_4pl <- function(x, y) {
+  Lmin <- quantile(y, 0.05, na.rm=TRUE)
+  Lmax <- quantile(y, 0.95, na.rm=TRUE)
+  xmid <- median(x, na.rm=TRUE)
+  # rough slope-based scale: change in x over IQR in y
+  dx <- diff(quantile(x, c(0.25, 0.75), na.rm=TRUE))
+  dy <- diff(quantile(y, c(0.25, 0.75), na.rm=TRUE))
+  s <- ifelse(dx == 0,  (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10,
+              dx * ( (Lmax-Lmin) / (dy + 1e-6) ) )
+  # fallbacks
+  s <- ifelse(is.na(s) | s==0, (max(x, na.rm=TRUE)-min(x, na.rm=TRUE))/10, s)
+  list(Lmin = as.numeric(Lmin), Lmax = as.numeric(Lmax), xmid = as.numeric(xmid), s = as.numeric(s))
+}
+
+# Fit nls 4-parameter logistic with safe tryCatch
+fit_4pl_nls <- function(df) {
+  x <- df$Midline
+  y <- df$Length
+  st <- start_vals_4pl(x,y)
+  formula_4pl <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s))
+  ctrl <- nls.control(maxiter = 400, tol = 1e-6, minFactor = 1/1024)
+  fit <- tryCatch(
+    nls(formula_4pl, data = df, start = st, control = ctrl, trace = FALSE),
+    error = function(e) {
+      # attempt simpler starting values if first failed
+      st2 <- list(Lmin = min(y, na.rm=TRUE), Lmax = max(y, na.rm=TRUE), xmid = mean(x, na.rm=TRUE), s = (max(x)-min(x))/20)
+      tryCatch(nls(formula_4pl, data = df, start = st2, control = ctrl),
+               error = function(e2) NULL)
+    }
+  )
+  return(fit)
+}
+
+```
+
+```{r}
+# assume rootData is loaded and columns: Midline, Length, side, root, Genotype
+rootData <- rootData %>%
+  mutate(root = as.factor(root), side = as.factor(side))
+
+# fit per root × side
+fits <- list()
+groups <- rootData %>% group_by(root, side) %>% group_split()
+
+for (g in groups) {
+  id <- paste0(unique(g$root), "_", unique(g$side))
+  f <- fit_4pl_nls(g)
+  fits[[id]] <- list(fit = f, data = g)
+}
+# quick summary of failed fits
+failed <- names(fits)[sapply(fits, function(x) is.null(x$fit))]
+if (length(failed) > 0) message("Failed fits (inspect data or starting values): ", paste(failed, collapse=", "))
+
+```
+
+```{r}
+coef_table <- lapply(names(fits), function(id) {
+  obj <- fits[[id]]
+  if (is.null(obj$fit)) return(tibble(id = id, root = sub("_.*","",id), side = sub(".*_","",id), failed = TRUE))
+  cf <- coef(obj$fit)
+  tibble(id = id, root = sub("_.*","",id), side = sub(".*_","",id),
+         Lmin = cf["Lmin"], Lmax = cf["Lmax"], xmid = cf["xmid"], s = cf["s"], failed = FALSE)
+}) %>% bind_rows()
+print(coef_table)
+
+```
+
+```{r}
+# helper to get predicted curve frame from fit
+pred_df_from_fit <- function(fit_obj, xseq = NULL, n = 200) {
+  if (is.null(fit_obj$fit)) return(NULL)
+  d <- fit_obj$data
+  if (is.null(xseq)) xseq <- seq(min(d$Midline, na.rm=TRUE), max(d$Midline, na.rm=TRUE), length.out = n)
+  cf <- coef(fit_obj$fit)
+  yhat <- cf["Lmin"] + (cf["Lmax"] - cf["Lmin"])/(1 + exp(-(xseq - cf["xmid"])/cf["s"]))
+  data.frame(Midline = xseq, Length = yhat, root = unique(d$root), side = unique(d$side))
+}
+
+# combine predictions
+preds <- bind_rows(lapply(fits, pred_df_from_fit))
+# combine with observed
+obs <- rootData
+
+# plot: full grid with bigger panels (use ncol small to enlarge)
+p_all <- ggplot() +
+  geom_point(data = obs, aes(x = Midline, y = Length, color = side), size = 1.8, alpha = 0.8) +
+  geom_line(data = preds, aes(x = Midline, y = Length, color = side), size = 1.1) +
+  facet_wrap(~ root, scales = "free_x", ncol = 3) +
+  theme_bw(base_size = 14) +
+  labs(title = "Cell length vs Midline with 4PL fits", x = "Midline (µm)", y = "Cell length (µm)")
+
+print(p_all)
+# Save large image:
+ggsave("cell_length_4pl_fits.png", p_all, width = 14, height = 18, dpi = 300)
+
+```
+
+```{r}
+param_wide <- coef_table %>%
+  filter(!failed) %>%
+  select(root, side, Lmin, Lmax, xmid, s) %>%
+  pivot_wider(names_from = side, values_from = c(Lmin, Lmax, xmid, s), names_sep = "_") %>%
+  mutate(outer_minus_inner_Lmax = Lmax_Outer - Lmax_Inner,
+         outer_minus_inner_Lmin = Lmin_Outer - Lmin_Inner,
+         outer_minus_inner_range = (Lmax_Outer - Lmin_Outer) - (Lmax_Inner - Lmin_Inner))
+
+param_wide %>% arrange(desc(outer_minus_inner_Lmax)) %>% print(n = Inf)
+
+```
+
+```{r}
+bootstrap_fit_ci <- function(fit_obj, nboot = 500) {
+  if (is.null(fit_obj$fit)) return(NULL)
+  cf <- coef(fit_obj$fit)
+  vc <- tryCatch(vcov(fit_obj$fit), error = function(e) NULL)
+  if (is.null(vc)) return(NULL)
+  draws <- mvrnorm(nboot, mu = cf, Sigma = vc)
+  # prepare x grid
+  d <- fit_obj$data
+  xseq <- seq(min(d$Midline, na.rm=TRUE), max(d$Midline, na.rm=TRUE), length.out = 150)
+  ymat <- apply(draws, 1, function(par) {
+    Lmin <- par["Lmin"]; Lmax <- par["Lmax"]; xmid <- par["xmid"]; s <- par["s"]
+    Lmin + (Lmax - Lmin)/(1 + exp(-(xseq - xmid)/s))
+  })
+  y_mean <- rowMeans(ymat)
+  y_lower <- apply(ymat, 1, quantile, probs = 0.025)
+  y_upper <- apply(ymat, 1, quantile, probs = 0.975)
+  data.frame(Midline = xseq, y_mean = y_mean, y_lo = y_lower, y_hi = y_upper,
+             root = unique(d$root), side = unique(d$side))
+}
+
+# example: bootstrap for a particular root-side
+example_id <- names(fits)[which(!sapply(fits, function(x) is.null(x$fit)))[1]]
+ci_df <- bootstrap_fit_ci(fits[[example_id]], nboot = 800)
+head(ci_df)
+
+```
+
+
+
+
+
+
+
