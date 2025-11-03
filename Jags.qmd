@@ -3,3 +3,26 @@ title: "Jags"
 format: html
 ---
 
+```{r}
+library(R2jags)
+
+# (prepare bdat as in earlier steps: minDB, N, ID, n_t, X, outer, outer_wt)
+
+# quick list of parameters to monitor
+params <- c("gamma0","gamma1","gamma2","sigma2","mu_a","mu_d","mu_eta","A_mean","B_mean")
+
+# run a very short test (small iter) just to verify the model compiles & initializes
+jags_test <- jags(data = bdat,
+                  inits = fun.inits,
+                  parameters.to.save = params,
+                  model.file = "mtModel.jags",
+                  n.chains = 2,
+                  n.iter = 2000,
+                  n.burnin = 500,
+                  n.thin = 1,
+                  DIC = FALSE,
+                  progress.bar = "text")
+
+print(jags_test)
+
+```
