@@ -25,7 +25,7 @@ model {
   tau_obs ~ dgamma(0.01,0.01)
   sigma2 <- 1 / tau_obs
 
-  # fixed effects for log(k)
+  # fixed effects for log(k) 
   gamma0 ~ dnorm(0, 0.001)
   gamma1 ~ dnorm(0, 0.001)
   gamma2 ~ dnorm(0, 0.001)
