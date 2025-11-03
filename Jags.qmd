@@ -2,98 +2,101 @@
 title: "Jags"
 format: html
 ---
-
 ```{r}
-# packages
+# --- Libraries ---
 library(R2jags)
 library(coda)
-library(dplyr)
 
-# --- Prepare data (assumes rootData is your data.frame with columns:
-#     minDB, Midline, ID, fHz (factor?), side, Genotype)
-# --- Adjust names to match your dataset if different.
+# --- Prepare data ---
+rootData$logLength <- log(rootData$Length)
 
-# scale Midline to [0,1] per instructions
-rootData <- rootData %>%
-  mutate(Midline_s = (Midline - min(Midline, na.rm=TRUE)) /
-                       (max(Midline, na.rm=TRUE) - min(Midline, na.rm=TRUE)))
+# Make sure the indicator columns are numeric (0/1)
+rootData$WT    <- as.numeric(rootData$WT)       # genotype indicator
+rootData$outer <- as.numeric(rootData$outer)    # side indicator
 
-# create indicators (outer = 1 if side == "Outer")
-rootData <- rootData %>%
-  mutate(outer = ifelse(side == "Outer", 1, 0),
-         WT = ifelse(Genotype == "WT", 1, 0),
-         outer_wt = outer * WT,
-         IDnum = as.numeric(factor(root)))  # root index 1..n_t
+# --- safe JAGS model file ---
+cat("
+model {
+  for (i in 1:N) {
+    logL[i] ~ dnorm(mu[i], tau)
+    # Lmax for observation i (must be positive)
+    Lmax_i[i] <- exp(logLmax0 + logLmax_gen * isMU[i] + logLmax_side * isOuter[i] + logLmax_int * isMU[i] * isOuter[i])
 
-# data list for JAGS
-bdat <- list(
-  minDB = rootData$minDB,
-  N = nrow(rootData),
-  ID = rootData$IDnum,
-  n_t = length(unique(rootData$IDnum)),
-  X = rootData$Midline_s,
-  outer = rootData$outer,
-  outer_wt = rootData$outer_wt
+    # Lmin positive via exp()
+    Lmin_pos <- exp(logLmin)
+
+    # logistic-like inner expression; add tiny eps to avoid log(0) if numerical rounding occurs
+    inner[i] <- Lmin_pos + ((Lmax_i[i] - Lmin_pos) / (1 + exp(-(Midline[i] - xmid)/s)))
+    mu[i] <- log( inner[i] + 1e-8 )   # tiny epsilon to avoid exact 0
+  }
+
+  # Priors on log-scale keep positivity and help sampling stability
+  logLmin     ~ dnorm(log(1), 1.0E-2)     # center near log(1); increase precision if you want narrower prior
+  logLmax0    ~ dnorm(log(10), 1.0E-2)
+  logLmax_gen ~ dnorm(0, 1.0E-2)
+  logLmax_side~ dnorm(0, 1.0E-2)
+  logLmax_int ~ dnorm(0, 1.0E-2)
+
+  # Midpoint and slope (xmid can be any real; s must be positive)
+  xmid ~ dnorm(0, 1.0E-4)
+  s    ~ dgamma(2, 1)    # shape=2, rate=1 gives a reasonable positive scale
+
+  # observation variance
+  sigma ~ dunif(0, 20)
+  tau <- pow(sigma, -2)
+}
+", file = "rootModel_safe.jags")
+
+# --- JAGS data list ---
+data_list <- list(
+  N        = nrow(rootData),
+  logL     = rootData$logLength,
+  Midline  = rootData$Midline_s,
+  isMU     = rootData$WT,
+  isOuter  = rootData$outer
 )
 
-# initial values function
-fun.inits <- function() {
-  # rough method-of-moments starts:
-  muA <- log(max(1, median(rootData$minDB, na.rm=TRUE)/2))  # crude
-  muD <- log(abs(diff(range(rootData$minDB, na.rm=TRUE))/2))
-  muEta <- qlogis(0.5)  # 0
-
+# --- Initial values ---
+inits_fn <- function() {
   list(
-    a = rnorm(bdat$n_t, mean = muA, sd = 0.5),
-    d = rnorm(bdat$n_t, mean = muD, sd = 0.5),
-    eta = rnorm(bdat$n_t, mean = muEta, sd = 0.5),
-    mu_a = muA, mu_d = muD, mu_eta = muEta,
-    tau_a = rgamma(1,1,1), tau_d = rgamma(1,1,1), tau_eta = rgamma(1,1,1),
-    tau_obs = rgamma(1,1,1),
-    gamma0 = rnorm(1,0,1), gamma1=rnorm(1,0,1), gamma2=rnorm(1,0,1)
+    Lmin = runif(1, 1, 10),
+    Lmax0 = runif(1, 5, 20),
+    Lmax_gen = rnorm(1, 0, 1),
+    Lmax_side = rnorm(1, 0, 1),
+    Lmax_int = rnorm(1, 0, 1),
+    xmid = rnorm(1, 0.25, 0.1),
+    s = runif(1, 0.01, 1),
+    sigma = runif(1, 0.1, 2)
   )
 }
 
-# parameters to save
-fun.params <- c("gamma0","gamma1","gamma2",
-                "sigma2",
-                "mu_a","mu_d","mu_eta",
-                "tau_a","tau_d","tau_eta",
-                "A_mean","B_mean")  # group-level derived
+params <- c("Lmin","Lmax0","Lmax_gen","Lmax_side","Lmax_int","xmid","s","sigma")
 
-# mcmc settings
-mcmc.pars <- list(iter=50000, burn=10000, nchain=4, thin=1)
+# --- Run JAGS ---
+jags_out <- jags(
+  data = data_list,
+  inits = inits_fn,
+  parameters.to.save = params,
+  model.file = "rootModel.jags",
+  n.chains = 4,
+  n.iter = 50000,
+  n.burnin = 10000,
+  n.thin = 2,
+  DIC = FALSE
+)
 
-# write model file
-cat(readLines("mtModel.jags"), sep="\n")  # ensure file exists (or write above text manually)
+print(jags_out)
+mcmc_chains <- as.mcmc(jags_out)
 
-# run JAGS
-jags.out <- jags(data=bdat,
-                 inits=fun.inits,
-                 parameters.to.save=fun.params,
-                 model.file="mtModel.jags",
-                 n.chains=mcmc.pars$nchain,
-                 n.iter=mcmc.pars$iter,
-                 n.burnin=mcmc.pars$burn,
-                 n.thin=mcmc.pars$thin,
-                 DIC=FALSE,
-                 progress.bar="text")
+# --- Diagnostics like in your slides ---
+gelman.plot(mcmc_chains)
+gelman.diag(mcmc_chains)
+effectiveSize(mcmc_chains)
+raftery.diag(mcmc_chains)
+autocorr.plot(mcmc_chains)
+summary(mcmc_chains)
+HPDinterval(mcmc_chains)
 
-# convert to mcmc.list
-sims <- as.mcmc(jags.out)
-
-# diagnostics
-print(jags.out)
-gelman.diag(sims, multivariate=FALSE)
-gelman.plot(sims, transform=TRUE)
-
-# traceplots for important parameters
-pdf("traceplots_root4PL.pdf", width=10, height=8)
-plot(sims[,c("gamma0","gamma1","gamma2","sigma2")])
-dev.off()
-
-# posterior summaries
-summary(sims)
-
-
+mcmc_chains
 ```
+
