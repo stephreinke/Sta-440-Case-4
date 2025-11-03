@@ -100,3 +100,21 @@ HPDinterval(mcmc_chains)
 mcmc_chains
 ```
 
+```{r}
+
+# Convert JAGS output to mcmc.list (already done)
+mcmc_chains <- as.mcmc(jags_out)
+
+# --- Trace plots ---
+# Trace plots for all monitored parameters
+traceplot(mcmc_chains)
+
+# If you want to plot a specific parameter, e.g., 'Lmin':
+traceplot(mcmc_chains[, "Lmin"])
+
+# You can also combine with density plots
+densplot(mcmc_chains)
+
+
+```
+
