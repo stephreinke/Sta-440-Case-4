@@ -9,17 +9,17 @@ library(R2jags)
 library(coda)
 library(dplyr)
 
-# --- Prepare data (assumes x2 is your data.frame with columns:
+# --- Prepare data (assumes rootData is your data.frame with columns:
 #     minDB, Midline, ID, fHz (factor?), side, Genotype)
 # --- Adjust names to match your dataset if different.
 
 # scale Midline to [0,1] per instructions
-x2 <- x2 %>%
+rootData <- rootData %>%
   mutate(Midline_s = (Midline - min(Midline, na.rm=TRUE)) /
                        (max(Midline, na.rm=TRUE) - min(Midline, na.rm=TRUE)))
 
 # create indicators (outer = 1 if side == "Outer")
-x2 <- x2 %>%
+rootData <- rootData %>%
   mutate(outer = ifelse(side == "Outer", 1, 0),
          WT = ifelse(Genotype == "WT", 1, 0),
          outer_wt = outer * WT,
@@ -27,20 +27,20 @@ x2 <- x2 %>%
 
 # data list for JAGS
 bdat <- list(
-  minDB = x2$minDB,
-  N = nrow(x2),
-  ID = x2$IDnum,
-  n_t = length(unique(x2$IDnum)),
-  X = x2$Midline_s,
-  outer = x2$outer,
-  outer_wt = x2$outer_wt
+  minDB = rootData$minDB,
+  N = nrow(rootData),
+  ID = rootData$IDnum,
+  n_t = length(unique(rootData$IDnum)),
+  X = rootData$Midline_s,
+  outer = rootData$outer,
+  outer_wt = rootData$outer_wt
 )
 
 # initial values function
 fun.inits <- function() {
   # rough method-of-moments starts:
-  muA <- log(max(1, median(x2$minDB, na.rm=TRUE)/2))  # crude
-  muD <- log(abs(diff(range(x2$minDB, na.rm=TRUE))/2))
+  muA <- log(max(1, median(rootData$minDB, na.rm=TRUE)/2))  # crude
+  muD <- log(abs(diff(range(rootData$minDB, na.rm=TRUE))/2))
   muEta <- qlogis(0.5)  # 0
 
   list(
