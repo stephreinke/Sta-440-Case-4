@@ -34,6 +34,7 @@ if(inherits(fixed_nls, "try-error")) stop("Fixed-effects nls failed; paste the e
 summary(fixed_nls)
 
 ```
+
 ```{r}
 # Load libraries
 library(dplyr)
@@ -54,9 +55,12 @@ df <- df %>%
          isOuter = ifelse(side == "Outer", 1, 0))
 
 # 4-parameter logistic with Lmax depending on genotype & side
-form <- Length ~ Lmin + ((Lmax0 + Lmax_gen*isMU + Lmax_side*isOuter + 
-                           Lmax_int*isMU*isOuter) - Lmin) /
-                  (1 + exp(-(Midline - xmid)/s))
+form_log <- log(Length) ~ log(
+  Lmin + ((Lmax0 + Lmax_gen * isMU + Lmax_side * isOuter +
+            Lmax_int * isMU * isOuter) - Lmin) /
+          (1 + exp(-(Midline - xmid)/s))
+)
+
 
 # Starting values from a pooled simple nls
 start_vals <- list(
@@ -68,7 +72,7 @@ start_vals <- list(
 )
 
 # Fit model (uses nlsLM for robustness but this is still just nonlinear regression)
-fit_rootType <- nlsLM(form, data = df, start = start_vals,
+fit_rootType <- nlsLM(form_log, data = df, start = start_vals,
                       control = nls.lm.control(maxiter = 1000))
 
 # See full summary
