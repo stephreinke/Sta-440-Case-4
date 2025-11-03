@@ -1,0 +1,54 @@
+model {
+  # likelihood
+  for (i in 1:N) {
+    j <- ID[i]
+    x <- X[i]  # scaled Midline in [0,1]
+
+    # enforce constraints
+    A[j] <- exp(a[j])            # > 0
+    delta[j] <- exp(d[j])       # > 0
+    B[j] <- A[j] + delta[j]     # B > A
+
+    x0[j] <- 1 / (1 + exp(-eta[j]))   # maps to (0,1)
+
+    # growth-rate (k) on log scale with fixed effects
+    logk[i] <- gamma0 + gamma1 * outer[i] + gamma2 * outer_wt[i]
+    k[i] <- exp(logk[i])
+
+    # 4PL mean
+    mu[i] <- A[j] + (B[j] - A[j]) / (1 + exp( -(x - x0[j]) / k[i] ))
+
+    minDB[i] ~ dnorm(mu[i], tau_obs)
+  }
+
+  # observation precision -> variance
+  tau_obs ~ dgamma(0.01,0.01)
+  sigma2 <- 1 / tau_obs
+
+  # fixed effects for log(k)
+  gamma0 ~ dnorm(0, 0.001)
+  gamma1 ~ dnorm(0, 0.001)
+  gamma2 ~ dnorm(0, 0.001)
+
+  # random effects (per root)
+  for (j in 1:n_t) {
+    a[j] ~ dnorm(mu_a, tau_a)
+    d[j] ~ dnorm(mu_d, tau_d)
+    eta[j] ~ dnorm(mu_eta, tau_eta)
+  }
+
+  # hyperpriors
+  mu_a ~ dnorm(log(1), 0.001)
+  mu_d ~ dnorm(0, 0.001)
+  mu_eta ~ dnorm(0, 0.001)
+
+  tau_a ~ dgamma(0.01, 0.01)
+  tau_d ~ dgamma(0.01, 0.01)
+  tau_eta ~ dgamma(0.01, 0.01)
+
+  # derived summaries (optional to monitor)
+  for (j in 1:n_t) {
+    A_mean[j] <- exp(mu_a)
+    B_mean[j] <- A_mean[j] + exp(mu_d)
+  }
+}
