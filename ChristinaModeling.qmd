@@ -75,6 +75,7 @@ fit_rootType <- nlsLM(form, data = df, start = start_vals,
 summary(fit_rootType)
 
 ```
+
 ```{r}
 # Extract residuals and fitted values
 res <- residuals(fit_rootType)
@@ -87,6 +88,39 @@ plot(fit_vals, res,
      ylab = "Residuals",
      pch = 19, col = "steelblue")
 abline(h = 0, col = "red", lwd = 2)
+
+ggplot(df, aes(x = fit_vals, y = res)) +
+  geom_point(color = "steelblue") +
+  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
+  facet_wrap(~ root, scales = "free") +
+  labs(
+    title = "Residuals vs Fitted by Root",
+    x = "Fitted values",
+    y = "Residuals"
+  ) +
+  theme_bw()
+
+ggplot(df, aes(x = fit_vals, y = res)) +
+  geom_point(color = "steelblue") +
+  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
+  facet_wrap(~ side, scales = "free") +
+  labs(
+    title = "Residuals vs Fitted by Side",
+    x = "Fitted values",
+    y = "Residuals"
+  ) +
+  theme_bw()
+
+ggplot(df, aes(x = fit_vals, y = res)) +
+  geom_point(color = "steelblue") +
+  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
+  facet_wrap(~ Genotype, scales = "free") +
+  labs(
+    title = "Residuals vs Fitted by Genotype",
+    x = "Fitted values",
+    y = "Residuals"
+  ) +
+  theme_bw()
 
 # Residuals vs predictor (Midline)
 plot(df$Midline, res,
