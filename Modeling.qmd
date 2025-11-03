@@ -33,6 +33,63 @@ fixed_nls <- try(nls(form4pl, data = rootData, start = start0, control = nls.con
 if(inherits(fixed_nls, "try-error")) stop("Fixed-effects nls failed; paste the error here.")
 summary(fixed_nls)
 
+nls_per_root <- nlsList(Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s)) | root,
+                        data = rootData,
+                        start = start0)
+summary(nls_per_root)
+
+
+```
+
+```{r}
+library(dplyr)
+library(purrr)
+
+form4pl <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s))
+
+# robust starts
+start0 <- list(Lmin=5, Lmax=30, xmid=1000, s=100)
+
+fits_side <- rootData %>%
+  group_by(root, side) %>%
+  group_map(~ {
+    try(nls(form4pl, data=.x, start=start0,
+            control=nls.control(maxiter=500, tol=1e-6)), silent=TRUE)
+  })
+
+coef_table <- map_dfr(fits_side, function(fit) {
+  if (inherits(fit, "try-error")) {
+    # return a named row of NAs
+    return(data.frame(Lmin=NA, Lmax=NA, xmid=NA, s=NA))
+  } else {
+    # ensure coefficients come back as a named data frame
+    co <- as.list(coef(fit))
+    return(as.data.frame(co))
+  }
+})
+
+# add identifiers back
+ids <- rootData %>% distinct(root, side)
+coef_table <- cbind(ids, coef_table)
+head(coef_table)
+
+delta_side <- coef_table %>%
+  pivot_wider(names_from = side, values_from = c(Lmin, Lmax, xmid, s))
+  
+
+
+
+delta_side <- delta_side |>
+   mutate(
+    dLmin = Lmin_Outer - Lmin_Inner,
+    dLmax = Lmax_Outer - Lmax_Inner,
+    dxmid = xmid_Outer - xmid_Inner,
+    ds    = s_Outer - s_Inner
+  )
+library(knitr)
+delta_side |>
+  kable()
+
 ```
 ```{r}
 # Load libraries
@@ -453,6 +510,17 @@ if(inherits(nls_list, "try-error")) {
 }
 
 ```
+
+```{r}
+
+library(dplyr)
+
+with(subset(rootData, Genotype=="WT" & side=="inner"), 
+     colSums(is.na(data.frame(Length, Midline))))
+
+
+```
+
 ```{r}
 library(nlme)
 library(dplyr)
