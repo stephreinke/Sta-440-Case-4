@@ -1,0 +1,30 @@
+
+model {
+  for (i in 1:N) {
+    logL[i] ~ dnorm(mu[i], tau)
+    # Lmax for observation i (must be positive)
+    Lmax_i[i] <- exp(logLmax0 + logLmax_gen * isMU[i] + logLmax_side * isOuter[i] + logLmax_int * isMU[i] * isOuter[i])
+
+    # Lmin positive via exp()
+    Lmin_pos <- exp(logLmin)
+
+    # logistic-like inner expression; add tiny eps to avoid log(0) if numerical rounding occurs
+    inner[i] <- Lmin_pos + ((Lmax_i[i] - Lmin_pos) / (1 + exp(-(Midline[i] - xmid)/s)))
+    mu[i] <- log( inner[i] + 1e-8 )   # tiny epsilon to avoid exact 0
+  }
+
+  # Priors on log-scale keep positivity and help sampling stability
+  logLmin     ~ dnorm(log(1), 1.0E-2)     # center near log(1); increase precision if you want narrower prior
+  logLmax0    ~ dnorm(log(10), 1.0E-2)
+  logLmax_gen ~ dnorm(0, 1.0E-2)
+  logLmax_side~ dnorm(0, 1.0E-2)
+  logLmax_int ~ dnorm(0, 1.0E-2)
+
+  # Midpoint and slope (xmid can be any real; s must be positive)
+  xmid ~ dnorm(0, 1.0E-4)
+  s    ~ dgamma(2, 1)    # shape=2, rate=1 gives a reasonable positive scale
+
+  # observation variance
+  sigma ~ dunif(0, 20)
+  tau <- pow(sigma, -2)
+}
