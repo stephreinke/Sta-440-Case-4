@@ -4,25 +4,96 @@ format: html
 ---
 
 ```{r}
+# packages
 library(R2jags)
+library(coda)
+library(dplyr)
 
-# (prepare bdat as in earlier steps: minDB, N, ID, n_t, X, outer, outer_wt)
+# --- Prepare data (assumes x2 is your data.frame with columns:
+#     minDB, Midline, ID, fHz (factor?), side, Genotype)
+# --- Adjust names to match your dataset if different.
 
-# quick list of parameters to monitor
-params <- c("gamma0","gamma1","gamma2","sigma2","mu_a","mu_d","mu_eta","A_mean","B_mean")
+# scale Midline to [0,1] per instructions
+x2 <- x2 %>%
+  mutate(Midline_s = (Midline - min(Midline, na.rm=TRUE)) /
+                       (max(Midline, na.rm=TRUE) - min(Midline, na.rm=TRUE)))
 
-# run a very short test (small iter) just to verify the model compiles & initializes
-jags_test <- jags(data = bdat,
-                  inits = fun.inits,
-                  parameters.to.save = params,
-                  model.file = "mtModel.jags",
-                  n.chains = 2,
-                  n.iter = 2000,
-                  n.burnin = 500,
-                  n.thin = 1,
-                  DIC = FALSE,
-                  progress.bar = "text")
+# create indicators (outer = 1 if side == "Outer")
+x2 <- x2 %>%
+  mutate(outer = ifelse(side == "Outer", 1, 0),
+         WT = ifelse(Genotype == "WT", 1, 0),
+         outer_wt = outer * WT,
+         IDnum = as.numeric(factor(root)))  # root index 1..n_t
 
-print(jags_test)
+# data list for JAGS
+bdat <- list(
+  minDB = x2$minDB,
+  N = nrow(x2),
+  ID = x2$IDnum,
+  n_t = length(unique(x2$IDnum)),
+  X = x2$Midline_s,
+  outer = x2$outer,
+  outer_wt = x2$outer_wt
+)
+
+# initial values function
+fun.inits <- function() {
+  # rough method-of-moments starts:
+  muA <- log(max(1, median(x2$minDB, na.rm=TRUE)/2))  # crude
+  muD <- log(abs(diff(range(x2$minDB, na.rm=TRUE))/2))
+  muEta <- qlogis(0.5)  # 0
+
+  list(
+    a = rnorm(bdat$n_t, mean = muA, sd = 0.5),
+    d = rnorm(bdat$n_t, mean = muD, sd = 0.5),
+    eta = rnorm(bdat$n_t, mean = muEta, sd = 0.5),
+    mu_a = muA, mu_d = muD, mu_eta = muEta,
+    tau_a = rgamma(1,1,1), tau_d = rgamma(1,1,1), tau_eta = rgamma(1,1,1),
+    tau_obs = rgamma(1,1,1),
+    gamma0 = rnorm(1,0,1), gamma1=rnorm(1,0,1), gamma2=rnorm(1,0,1)
+  )
+}
+
+# parameters to save
+fun.params <- c("gamma0","gamma1","gamma2",
+                "sigma2",
+                "mu_a","mu_d","mu_eta",
+                "tau_a","tau_d","tau_eta",
+                "A_mean","B_mean")  # group-level derived
+
+# mcmc settings
+mcmc.pars <- list(iter=50000, burn=10000, nchain=4, thin=1)
+
+# write model file
+cat(readLines("mtModel.jags"), sep="\n")  # ensure file exists (or write above text manually)
+
+# run JAGS
+jags.out <- jags(data=bdat,
+                 inits=fun.inits,
+                 parameters.to.save=fun.params,
+                 model.file="mtModel.jags",
+                 n.chains=mcmc.pars$nchain,
+                 n.iter=mcmc.pars$iter,
+                 n.burnin=mcmc.pars$burn,
+                 n.thin=mcmc.pars$thin,
+                 DIC=FALSE,
+                 progress.bar="text")
+
+# convert to mcmc.list
+sims <- as.mcmc(jags.out)
+
+# diagnostics
+print(jags.out)
+gelman.diag(sims, multivariate=FALSE)
+gelman.plot(sims, transform=TRUE)
+
+# traceplots for important parameters
+pdf("traceplots_root4PL.pdf", width=10, height=8)
+plot(sims[,c("gamma0","gamma1","gamma2","sigma2")])
+dev.off()
+
+# posterior summaries
+summary(sims)
+
 
 ```
