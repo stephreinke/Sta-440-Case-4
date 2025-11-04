@@ -290,6 +290,61 @@ qqline(resids, col="red", lwd=2)
 
 ```
 
+```{r}
+# p2
+sims <- as.data.frame(as.matrix(mcmc_chains))
+library(ggplot2)
+
+mid_grid <- seq(min(rootData$Midline_s), max(rootData$Midline_s), length.out = 200)
+
+pred_mat <- sapply(1:nrow(sims), function(i) {
+  Lmax <- exp(sims$logLmax0[i])
+  Lmin <- exp(sims$logLmin[i])
+  xmid <- sims$xmid[i]
+  s    <- sims$s[i]
+
+  Lmin + (Lmax - Lmin) / (1 + exp(-(mid_grid - xmid)/s))
+})
+
+pred_df <- data.frame(
+  mid = mid_grid,
+  mean = apply(pred_mat, 1, mean),
+  lo = apply(pred_mat, 1, quantile, 0.025),
+  hi = apply(pred_mat, 1, quantile, 0.975)
+)
+
+ggplot(pred_df, aes(mid, mean)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.25) +
+  geom_line(size = 1.2) +
+  labs(title = "Posterior Logistic Growth Curve (WT Inner)",
+       x = "Midline", y = "Predicted Length") +
+  theme_minimal()
+pred_obs <- numeric(nrow(rootData))
+
+for (n in 1:nrow(rootData)) {
+  Lmax <- exp(
+    sims$logLmax0 +
+    sims$logLmax_gen * rootData$WT[n] +
+    sims$logLmax_side * rootData$outer[n] +
+    sims$logLmax_int * rootData$WT[n] * rootData$outer[n]
+  )
+
+  Lmin <- exp(sims$logLmin)
+
+  mu <- Lmin + (Lmax - Lmin) /
+        (1 + exp(-(rootData$Midline_s[n] - sims$xmid) / sims$s))
+
+  pred_obs[n] <- mean(log(mu))
+}
+
+resids <- rootData$logLength - pred_obs
+boxplot(resids, main = "Residual Boxplot", ylab = "Residuals")
+abline(h = 0, col = "red", lwd = 2)
+qqnorm(resids, main="Residual QQ Plot")
+qqline(resids, col="red", lwd=2)
+
+```
+
 
 
 
