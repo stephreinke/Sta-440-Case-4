@@ -117,6 +117,7 @@ densplot(mcmc_chains)
 
 
 ```
+
 ```{r}
 # Trace plots for key parameters
 library(coda)
@@ -146,6 +147,7 @@ for (param in c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int", "xmid", "s")) {
 par(mfrow=c(1,1))
 
 ```
+
 ```{r}
 # --- Compute posterior summaries ---
 posterior_summary <- function(varname) {
@@ -175,6 +177,7 @@ ggplot(params_summary, aes(x = Parameter, y = mean)) +
 
 
 ```
+
 ```{r}
 # Posterior means for fitted values
 fitted_mu <- colMeans(as.matrix(mcmc_chains)[, grep("^mu", colnames(as.matrix(mcmc_chains)))])
@@ -211,6 +214,81 @@ ggplot(params_summary, aes(x=rownames(params_summary))) +
 
 ```
 
+```{r}
+#| label: metrics_new
+
+# Estimated effective sample sizes for all parameters
+effectiveSize(mcmc_chains)
+
+# Table for quick review
+ESS_table <- data.frame(
+  Parameter = colnames(as.matrix(mcmc_chains)),
+  ESS = effectiveSize(mcmc_chains)
+)
+print(ESS_table)
+
+library(dplyr)
+library(ggplot2)
+
+# Extract posterior draws
+sims <- as.data.frame(as.matrix(mcmc_chains))
+
+# Prediction grid of midline values
+mid_grid <- seq(min(rootData$Midline_s), max(rootData$Midline_s), length.out = 200)
+
+# Posterior predictions for WT=0 inner (as an example)
+pred_list <- lapply(1:nrow(sims), function(i) {
+  Lmax <- exp(sims$logLmax0[i])
+  Lmin <- exp(sims$logLmin[i])
+  xmid <- sims$xmid[i]
+  s    <- sims$s[i]
+  
+  pred <- Lmin + (Lmax - Lmin) / (1 + exp(-(mid_grid - xmid)/s))
+  return(pred)
+})
+
+pred_mat <- do.call(rbind, pred_list)
+
+pred_df <- data.frame(
+  mid = mid_grid,
+  mean = apply(pred_mat, 2, mean),
+  lo = apply(pred_mat, 2, quantile, 0.025),
+  hi = apply(pred_mat, 2, quantile, 0.975)
+)
+
+ggplot(pred_df, aes(mid, mean)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.2) +
+  geom_line(size=1.2) +
+  labs(title = "Posterior Audiogram Estimate (WT Inner)",
+       x="Midline", y="Predicted Cell Length") +
+  theme_minimal()
+
+# Compute posterior mean prediction for each observation
+pred_obs <- numeric(nrow(rootData))
+
+for (i in 1:nrow(rootData)) {
+  Lmax <- exp(sims$logLmax0) *
+          exp(sims$logLmax_gen * rootData$WT[i]) *
+          exp(sims$logLmax_side * rootData$outer[i]) *
+          exp(sims$logLmax_int * rootData$WT[i] * rootData$outer[i])
+
+  Lmin <- exp(sims$logLmin)
+  xmid <- sims$xmid
+  s <- sims$s
+
+  mu_post <- Lmin + (Lmax - Lmin) / (1 + exp(-(rootData$Midline_s[i] - xmid)/s))
+  pred_obs[i] <- mean(log(mu_post))
+}
+
+resids <- rootData$logLength - pred_obs
+
+boxplot(resids, main="Residual Boxplot", ylab="Residuals")
+abline(h = 0, col="red", lwd=2)
+
+qqnorm(resids, main="Residual QQ Plot")
+qqline(resids, col="red", lwd=2)
+
+```
 
 
 
