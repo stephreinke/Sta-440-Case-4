@@ -110,15 +110,33 @@ ggplot(t_results, aes(x = Genotype, y = mean_diff, color = p_value < 0.05)) +
 
 ```
 ```{r}
-ggplot(rootData, aes(x = Midline, y = Length, color = side)) +
-  geom_point(alpha = 0.005) + 
-  geom_smooth(method = "loess", se = FALSE) +
-  facet_wrap(~ root, scales = "free_x") +
-  theme_bw() +
-  labs(title = "Cell Length Along the Root Midline",
-       x = "Distance along root (µm)",
-       y = "Cell length (µm)",
-       color = "Side of Root")
+
+rootData |>
+  filter(Genotype == "WT") |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.005) + 
+    geom_smooth(method = "loess", se = FALSE) +
+    facet_wrap(~ root, scales = "free_x") +
+    theme_bw() +
+    labs(title = "Cell Length Along the Root Midline for Wild Type",
+         x = "Distance along root (µm)",
+         y = "Cell length (µm)",
+         color = "Side of Root") +
+  scale_color_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
+
+
+rootData |>
+  filter(Genotype == "MU") |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.005) + 
+    geom_smooth(method = "loess", se = FALSE) +
+    facet_wrap(~ root, scales = "free_x") +
+    theme_bw() +
+    labs(title = "Cell Length Along the Root Midline for Mutant Type",
+         x = "Distance along root (µm)",
+         y = "Cell length (µm)",
+         color = "Side of Root") +
+  scale_color_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
 
 ggplot(rootData, aes(x = side, y = Length, fill = side)) +
   geom_boxplot() +
@@ -127,7 +145,8 @@ ggplot(rootData, aes(x = side, y = Length, fill = side)) +
   labs(title = "Distribution of Cell Lengths by Genotype and Side",
        x = "Root Side",
        y = "Cell Length (µm)",
-       fill = "Side")
+       fill = "Side") +
+  scale_color_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
 
 ggplot(rootData, aes(x = Length, fill = side)) +
   geom_density(alpha = 0.4) +
