@@ -117,4 +117,102 @@ densplot(mcmc_chains)
 
 
 ```
+```{r}
+# Trace plots for key parameters
+library(coda)
+
+# Plot all parameters together
+traceplot(mcmc_chains)
+
+# Example: sigma trace with posterior mean (red) and frequentist estimate (green)
+sigma_post <- as.numeric(as.matrix(mcmc_chains)[, "sigma"])
+plot(sigma_post, type="l", col="black", ylab="sigma", xlab="Iteration/10")
+abline(h=mean(sigma_post), col="red", lwd=2)   # posterior mean
+abline(h=sd(rootData$Length), col="green", lwd=2)  # frequentist reference
+
+```
+```{r}
+# Convert MCMC output to a matrix
+sims <- as.data.frame(as.matrix(mcmc_chains))
+
+# Posterior histograms for fixed effects
+par(mfrow=c(2, 3))
+for (param in c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int", "xmid", "s")) {
+  hist(sims[[param]], freq=FALSE, breaks=50,
+       main=paste("Posterior of", param), xlab=param, col="gray90", border="white")
+  lines(density(sims[[param]]), col="blue", lwd=2)
+  abline(v=mean(sims[[param]]), col="red", lwd=2)
+}
+par(mfrow=c(1,1))
+
+```
+```{r}
+# --- Compute posterior summaries ---
+posterior_summary <- function(varname) {
+  x <- sims[[varname]]
+  c(mean = mean(x),
+    lower = quantile(x, 0.025),
+    upper = quantile(x, 0.975))
+}
+
+# Apply to parameters
+params_summary <- t(sapply(c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int"), posterior_summary))
+params_summary <- as.data.frame(params_summary)
+
+# Add a column for parameter names (for ggplot)
+params_summary$Parameter <- rownames(params_summary)
+
+# --- Plot with error bars ---
+library(ggplot2)
+
+ggplot(params_summary, aes(x = Parameter, y = mean)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
+  theme_minimal() +
+  labs(title = "Posterior Means and 95% Credible Intervals",
+       x = "Parameter",
+       y = "Estimate")
+
+
+```
+```{r}
+# Posterior means for fitted values
+fitted_mu <- colMeans(as.matrix(mcmc_chains)[, grep("^mu", colnames(as.matrix(mcmc_chains)))])
+residuals <- rootData$logLength - fitted_mu
+
+# QQ plot
+qqnorm(residuals, main="Normal Q-Q Plot of Residuals")
+qqline(residuals, col="red", lwd=2)
+
+# Boxplot by side
+boxplot(residuals ~ rootData$side, las=1,
+        ylab="Residuals", xlab="Side", col="gray90")
+abline(h=0, col="red", lwd=2)
+
+# Boxplot by root (random effect group)
+boxplot(residuals ~ rootData$root, las=1,
+        ylab="Residuals", xlab="Root ID", col="gray90")
+abline(h=0, col="red", lwd=2)
+
+```
+```{r}
+# Example comparison of Lmax estimates
+freq_estimates <- summary(fit_nls)$coefficients[c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int"), 1]
+
+params_summary$frequentist <- freq_estimates
+
+ggplot(params_summary, aes(x=rownames(params_summary))) +
+  geom_point(aes(y=mean), color="red", size=3) +
+  geom_errorbar(aes(ymin=lower, ymax=upper), width=0.2, color="red") +
+  geom_point(aes(y=frequentist), color="green", shape=17, size=3) +
+  theme_minimal() +
+  labs(title="Bayesian (red) vs Frequentist (green) Parameter Estimates",
+       y="Estimate", x="Parameter")
+
+```
+
+
+
+
+
 
