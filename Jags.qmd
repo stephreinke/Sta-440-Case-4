@@ -2,103 +2,157 @@
 title: "Jags"
 format: html
 ---
+
 ```{r}
 # --- Libraries ---
 library(R2jags)
 library(coda)
+library(dplyr)
+library(ggplot2)
 
-# --- Prepare data ---
-rootData$logLength <- log(rootData$Length)
+# --- Prepare df (use your rootData) ---
+df <- rootData %>%
+  rename(Midline = Midline, Length = Length, side = side, Genotype = Genotype) %>%
+  mutate(Genotype = factor(Genotype),
+         side = factor(side),
+         isMU = ifelse(Genotype == "MU", 1, 0),
+         isOuter = ifelse(side == "Outer", 1, 0))
 
-# Make sure the indicator columns are numeric (0/1)
-rootData$WT    <- as.numeric(rootData$WT)       # genotype indicator
-rootData$outer <- as.numeric(rootData$outer)    # side indicator
+# required: no NA in Midline/Length/isMU/isOuter
+stopifnot(!any(is.na(df$Midline)))
+stopifnot(!any(is.na(df$Length)))
+stopifnot(all(df$isMU %in% c(0,1)))
+stopifnot(all(df$isOuter %in% c(0,1)))
 
-# --- safe JAGS model file ---
+# Response on log scale
+df$logLength <- log(df$Length)
+
+# --- Write JAGS model file (natural-scale parameters, log-response) ---
 cat("
 model {
   for (i in 1:N) {
-    logL[i] ~ dnorm(mu[i], tau)
-    # Lmax for observation i (must be positive)
-    Lmax_i[i] <- exp(logLmax0 + logLmax_gen * isMU[i] + logLmax_side * isOuter[i] + logLmax_int * isMU[i] * isOuter[i])
+    # Build Lmax on natural scale from fixed effects (additive)
+    Lmax_i[i] <- Lmax0 + Lmax_gen * isMU[i] + Lmax_side * isOuter[i] + Lmax_int * isMU[i] * isOuter[i]
 
-    # Lmin positive via exp()
-    Lmin_pos <- exp(logLmin)
+    # Lmin must be positive -> we put a prior on Lmin (natural scale)
+    # Compute the 4PL mean (natural scale)
+    mu_nat[i] <- Lmin + (Lmax_i[i] - Lmin) / (1 + exp( -(Midline[i] - xmid) / s ))
 
-    # logistic-like inner expression; add tiny eps to avoid log(0) if numerical rounding occurs
-    inner[i] <- Lmin_pos + ((Lmax_i[i] - Lmin_pos) / (1 + exp(-(Midline[i] - xmid)/s)))
-    mu[i] <- log( inner[i] + 1e-8 )   # tiny epsilon to avoid exact 0
+    # Defensive: ensure mu_nat > 0 before log
+    positive_flag[i] <- step(mu_nat[i])    # 1 if mu_nat > 0 else 0
+    mu_safe[i] <- mu_nat[i] * positive_flag[i] + (1.0E-6) * (1 - positive_flag[i])
+
+    # log-response
+    mu_log[i] <- log(mu_safe[i])
+    logL[i] ~ dnorm(mu_log[i], tau)
   }
 
-  # Priors on log-scale keep positivity and help sampling stability
-  logLmin     ~ dnorm(log(1), 1.0E-2)     # center near log(1); increase precision if you want narrower prior
-  logLmax0    ~ dnorm(log(10), 1.0E-2)
-  logLmax_gen ~ dnorm(0, 1.0E-2)
-  logLmax_side~ dnorm(0, 1.0E-2)
-  logLmax_int ~ dnorm(0, 1.0E-2)
-
-  # Midpoint and slope (xmid can be any real; s must be positive)
-  xmid ~ dnorm(0, 1.0E-4)
-  s    ~ dgamma(2, 1)    # shape=2, rate=1 gives a reasonable positive scale
-
-  # observation variance
-  sigma ~ dunif(0, 20)
+  # Observation variance
+  sigma ~ dunif(0, 50)
   tau <- pow(sigma, -2)
-}
-", file = "rootModel_safe.jags")
 
-# --- JAGS data list ---
+  # --- Priors on natural-scale parameters ---
+  # Keep Lmin and Lmax0 positive with lognormal priors (weakly informative)
+  Lmin  ~ dlnorm(log(1.0), 1.0)    # median ~1
+  Lmax0 ~ dlnorm(log(10.0), 1.0)   # median ~10
+
+  # genotype / side / interaction effects (can be + or -)
+  Lmax_gen  ~ dnorm(0, 0.01)
+  Lmax_side ~ dnorm(0, 0.01)
+  Lmax_int  ~ dnorm(0, 0.01)
+
+  # logistic midpoint and slope-scale
+  xmid ~ dnorm(median_Midline, 1.0E-4)  # center prior near data median (set from R)
+  s    ~ dgamma(2, 1)
+
+  # Derived monitors (optional)
+  for (i in 1:N) {
+    Lmax_monitor[i] <- Lmax_i[i]
+    mu_nat_monitor[i] <- mu_nat[i]
+  }
+}
+", file = "rootModel_formlog.jags")
+
+# --- Data list for JAGS ---
 data_list <- list(
-  N        = nrow(rootData),
-  logL     = rootData$logLength,
-  Midline  = rootData$Midline_s,
-  isMU     = rootData$WT,
-  isOuter  = rootData$outer
+  N        = nrow(df),
+  logL     = df$logLength,
+  Midline  = df$Midline,
+  isMU     = df$isMU,
+  isOuter  = df$isOuter,
+  # pass the median of Midline so JAGS can center xmid prior sensibly
+  median_Midline = median(df$Midline, na.rm = TRUE)
 )
 
-# --- Initial values ---
+# --- Initial values (matching parameter names in model) ---
 inits_fn <- function() {
   list(
-    Lmin = runif(1, 1, 10),
-    Lmax0 = runif(1, 5, 20),
-    Lmax_gen = rnorm(1, 0, 1),
-    Lmax_side = rnorm(1, 0, 1),
-    Lmax_int = rnorm(1, 0, 1),
-    xmid = rnorm(1, 0.25, 0.1),
-    s = runif(1, 0.01, 1),
-    sigma = runif(1, 0.1, 2)
+    Lmin = runif(1, max(0.1, quantile(df$Length, 0.01)), quantile(df$Length, 0.25)),
+    Lmax0 = runif(1, quantile(df$Length, 0.75), quantile(df$Length, 0.99)),
+    Lmax_gen = rnorm(1, 0, 0.1),
+    Lmax_side = rnorm(1, 0, 0.1),
+    Lmax_int = rnorm(1, 0, 0.1),
+    xmid = median(df$Midline, na.rm = TRUE),
+    s = runif(1, (max(df$Midline)-min(df$Midline))/50, (max(df$Midline)-min(df$Midline))/4),
+    sigma = runif(1, 0.1, sd(df$logLength))
   )
 }
 
-params <- c("Lmin","Lmax0","Lmax_gen","Lmax_side","Lmax_int","xmid","s","sigma")
+# --- Parameters to save ---
+params <- c("Lmin","Lmax0","Lmax_gen","Lmax_side","Lmax_int","xmid","s","sigma",
+            "Lmax_monitor","mu_nat_monitor")
 
 # --- Run JAGS ---
 jags_out <- jags(
   data = data_list,
   inits = inits_fn,
   parameters.to.save = params,
-  model.file = "rootModel.jags",
+  model.file = "rootModel_formlog.jags",
   n.chains = 4,
-  n.iter = 50000,
-  n.burnin = 10000,
-  n.thin = 2,
-  DIC = FALSE
+  n.iter = 25000,
+  n.burnin = 6000,
+  n.thin = 4,
+  DIC = TRUE
 )
 
+# --- Convert & Diagnostics ---
 print(jags_out)
 mcmc_chains <- as.mcmc(jags_out)
-
-# --- Diagnostics like in your slides ---
-gelman.plot(mcmc_chains)
-gelman.diag(mcmc_chains)
-effectiveSize(mcmc_chains)
-raftery.diag(mcmc_chains)
-autocorr.plot(mcmc_chains)
-summary(mcmc_chains)
-HPDinterval(mcmc_chains)
-
-mcmc_chains
 ```
+
+
+
+
+```{r}
+n_chains <- length(mcmc_chains)
+iters_per_chain <- niter(mcmc_chains)
+total_draws <- n_chains * iters_per_chain
+
+cat("MCMC Summary:\n")
+cat("  Number of chains: ", n_chains, "\n")
+cat("  Iterations per chain: ", iters_per_chain, "\n")
+cat("  Total posterior draws: ", total_draws, "\n\n")
+
+# --- Effective sample sizes ---
+ess_vals <- effectiveSize(mcmc_chains)
+cat("Effective Sample Sizes (ESS):\n")
+print(summary(ess_vals))
+
+# Show smallest and largest ESS for a quick check
+cat("\nRange of ESS:\n")
+cat("  Min ESS:", min(ess_vals), "\n")
+cat("  Max ESS:", max(ess_vals), "\n\n")
+
+# Optional: short summary table for top parameters
+ess_table <- sort(ess_vals, decreasing = TRUE)
+head(ess_table)
+```
+
+
+
+
+
+
 
 ```{r}
 library(coda)
@@ -130,6 +184,7 @@ df_quantiles <- as.data.frame(coda_summary$quantiles)
 head(df_summary)
 head(df_quantiles)
 
+coda_summary
 ```
 
 

@@ -1,0 +1,57 @@
+
+model {
+  # Observation loop: use root-indexed arrays directly (no x0_i or Lmin_i)
+  for (i in 1:N) {
+    Lmax_i[i] <- Lmax0 + Lmax_gen * isMU[i] + Lmax_side * isOuter[i] + Lmax_int * isMU[i] * isOuter[i]
+
+    mu_nat[i] <- Lmin[root[i]] + (Lmax_i[i] - Lmin[root[i]]) /
+                 (1 + exp( -(Midline[i] - x0[root[i]]) / s ))
+
+    # guard positive then log
+    positive_flag[i] <- step(mu_nat[i])
+    mu_safe[i] <- mu_nat[i] * positive_flag[i] + (1.0E-6) * (1 - positive_flag[i])
+    mu_log[i] <- log(mu_safe[i])
+
+    logL[i] ~ dnorm(mu_log[i], tau)
+  }
+
+  # observation sd (half-normal)
+  sigma ~ dnorm(0.0, 1.0 / (10.0 * 10.0)) T(0,)
+  tau <- pow(sigma, -2)
+
+  # Root-level non-centered parameterization
+  for (j in 1:J) {
+    a_raw[j]   ~ dnorm(0, 1)
+    eta_raw[j] ~ dnorm(0, 1)
+  }
+
+  # Hyperpriors
+  mu_a   ~ dnorm(log(median_Length), 1.0)   # sd = 1 on log scale
+  mu_eta ~ dnorm(0.0, 1.0)
+
+  sd_a   ~ dunif(0, 10)
+  sd_eta ~ dunif(0, 10)
+
+  # Build centered root-level arrays once
+  for (j in 1:J) {
+    a[j]   <- mu_a + sd_a * a_raw[j]
+    eta[j] <- mu_eta + sd_eta * eta_raw[j]
+
+    Lmin[j] <- exp(a[j])
+    x0[j]   <- 1 / (1 + exp(-eta[j]))
+  }
+
+  # Fixed effects priors
+  Lmax0    ~ dnorm(median_Length_upper, 1.0 / (10.0 * 10.0))  # sd=10
+  Lmax_gen ~ dnorm(0.0, 1.0 / (5.0 * 5.0))  # sd=5
+  Lmax_side~ dnorm(0.0, 1.0 / (5.0 * 5.0))
+  Lmax_int ~ dnorm(0.0, 1.0 / (5.0 * 5.0))
+
+  s ~ dgamma(2, 1)
+
+  # Optional monitors
+  for (i in 1:N) {
+    Lmax_monitor[i] <- Lmax_i[i]
+    mu_nat_monitor[i] <- mu_nat[i]
+  }
+}
