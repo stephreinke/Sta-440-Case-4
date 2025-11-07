@@ -1,54 +1,61 @@
 model {
-  # likelihood
+  # --- Likelihood (log of dependent variable) ---
   for (i in 1:N) {
     j <- ID[i]
-    x <- X[i]  # scaled Midline in [0,1]
+    x <- X[i]   # scaled Midline (your Midline_s)
 
-    # enforce constraints
-    A[j] <- exp(a[j])            # > 0
-    delta[j] <- exp(d[j])       # > 0
-    B[j] <- A[j] + delta[j]     # B > A
+    # per-root lower asymptote (positive)
+    A[j] <- exp(a[j])      # natural-scale lower asymptote for root j
 
-    x0[j] <- 1 / (1 + exp(-eta[j]))   # maps to (0,1)
+    # observation-level Lmax built from natural-scale fixed effects
+    Lmax_i[i] <- Lmax0 +
+                 Lmax_gen * isMU[i] +
+                 Lmax_side * isOuter[i] +
+                 Lmax_int * isMU[i] * isOuter[i]
 
-    # growth-rate (k) on log scale with fixed effects
-    logk[i] <- gamma0 + gamma1 * outer[i] + gamma2 * outer_wt[i]
-    k[i] <- exp(logk[i])
+    # per-root midpoint mapped to (0,1)
+    x0[j] <- 1 / (1 + exp(-eta[j]))
 
-    # 4PL mean
-    mu[i] <- A[j] + (B[j] - A[j]) / (1 + exp( -(x - x0[j]) / k[i] ))
+    # 4PL mean on natural scale
+    mu_nat[i] <- A[j] + (Lmax_i[i] - A[j]) / (1 + exp( -(x - x0[j]) / s ))
 
-    minDB[i] ~ dnorm(mu[i], tau_obs)
+    # model the log-response (add tiny eps for numerical safety)
+    mu_log[i] <- log(mu_nat[i] + 1.0E-8)
+    logLength[i] ~ dnorm(mu_log[i], tau_obs)
   }
 
-  # observation precision -> variance
-  tau_obs ~ dgamma(0.01,0.01)
+  # --- observation precision ---
+  tau_obs ~ dgamma(0.01, 0.01)
   sigma2 <- 1 / tau_obs
+  sigma  <- sqrt(sigma2)
 
-  # fixed effects for log(k) 
-  gamma0 ~ dnorm(0, 0.001)
-  gamma1 ~ dnorm(0, 0.001)
-  gamma2 ~ dnorm(0, 0.001)
+  # --- Priors for natural-scale Lmax fixed effects (not logged) ---
+  # Lmax0 is baseline upper asymptote (choose a positive-centered prior)
+  Lmax0    ~ dnorm(10, 0.001)        # mean 10, precision 0.001 -> sd ~31.6 (weak)
+  Lmax_gen ~ dnorm(0, 0.001)
+  Lmax_side~ dnorm(0, 0.001)
+  Lmax_int ~ dnorm(0, 0.001)
 
-  # random effects (per root)
+  # --- Global midpoint & slope priors ---
+  xmid ~ dnorm(0, 1.0E-4)   # very diffuse; change if you prefer centering
+  s    ~ dgamma(2, 1)       # positive slope-scale
+
+  # --- Random effects for lower asymptote and midpoint (per root) ---
   for (j in 1:n_t) {
-    a[j] ~ dnorm(mu_a, tau_a)
-    d[j] ~ dnorm(mu_d, tau_d)
-    eta[j] ~ dnorm(mu_eta, tau_eta)
+    a[j]   ~ dnorm(mu_a,   tau_a)     # controls A[j] = exp(a[j])
+    eta[j] ~ dnorm(mu_eta, tau_eta)   # controls x0[j] via logistic
   }
 
-  # hyperpriors
-  mu_a ~ dnorm(log(1), 0.001)
-  mu_d ~ dnorm(0, 0.001)
+  # --- Hyperpriors (population-level) ---
+  mu_a   ~ dnorm(log(1), 0.001)   # center for log-Lmin
   mu_eta ~ dnorm(0, 0.001)
 
-  tau_a ~ dgamma(0.01, 0.01)
-  tau_d ~ dgamma(0.01, 0.01)
+  tau_a   ~ dgamma(0.01, 0.01)
   tau_eta ~ dgamma(0.01, 0.01)
 
-  # derived summaries (optional to monitor)
+  # --- Derived population summaries (optional monitors) ---
   for (j in 1:n_t) {
-    A_mean[j] <- exp(mu_a)
-    B_mean[j] <- A_mean[j] + exp(mu_d)
+    Lmin_mean[j] <- exp(mu_a)
+    Lmax_mean[j] <- Lmax0 + Lmax_gen * 0 + Lmax_side * 0 + Lmax_int * 0  # baseline Lmax (WT inner)
   }
 }

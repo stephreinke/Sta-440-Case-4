@@ -55,10 +55,9 @@ df <- df %>%
          isOuter = ifelse(side == "Outer", 1, 0))
 
 # 4-parameter logistic with Lmax depending on genotype & side
-form_log <- log(Length) ~ log(
-  Lmin + ((Lmax0 + Lmax_gen * isMU + Lmax_side * isOuter +
+form_log <- log(Length) ~ Lmin + ((Lmax0 + Lmax_gen * isMU + Lmax_side * isOuter +
             Lmax_int * isMU * isOuter) - Lmin) /
-          (1 + exp(-(Midline - xmid)/s))
+          (1 + exp(-(Midline - xmid)/s)
 )
 
 

@@ -2,103 +2,191 @@
 title: "Jags"
 format: html
 ---
+
 ```{r}
 # --- Libraries ---
 library(R2jags)
 library(coda)
+library(dplyr)
+library(ggplot2)
 
-# --- Prepare data ---
-rootData$logLength <- log(rootData$Length)
+# --- Prepare df (use your rootData) ---
+df <- rootData %>%
+  rename(Midline = Midline, Length = Length, side = side, Genotype = Genotype) %>%
+  mutate(Genotype = factor(Genotype),
+         side = factor(side),
+         isMU = ifelse(Genotype == "MU", 1, 0),
+         isOuter = ifelse(side == "Outer", 1, 0))
 
-# Make sure the indicator columns are numeric (0/1)
-rootData$WT    <- as.numeric(rootData$WT)       # genotype indicator
-rootData$outer <- as.numeric(rootData$outer)    # side indicator
+# required: no NA in Midline/Length/isMU/isOuter
+stopifnot(!any(is.na(df$Midline)))
+stopifnot(!any(is.na(df$Length)))
+stopifnot(all(df$isMU %in% c(0,1)))
+stopifnot(all(df$isOuter %in% c(0,1)))
 
-# --- safe JAGS model file ---
+# Response on log scale
+df$logLength <- log(df$Length)
+
+# --- Write JAGS model file (natural-scale parameters, log-response) ---
 cat("
 model {
   for (i in 1:N) {
-    logL[i] ~ dnorm(mu[i], tau)
-    # Lmax for observation i (must be positive)
-    Lmax_i[i] <- exp(logLmax0 + logLmax_gen * isMU[i] + logLmax_side * isOuter[i] + logLmax_int * isMU[i] * isOuter[i])
+    # Build Lmax on natural scale from fixed effects (additive)
+    Lmax_i[i] <- Lmax0 + Lmax_gen * isMU[i] + Lmax_side * isOuter[i] + Lmax_int * isMU[i] * isOuter[i]
 
-    # Lmin positive via exp()
-    Lmin_pos <- exp(logLmin)
+    # Lmin must be positive -> we put a prior on Lmin (natural scale)
+    # Compute the 4PL mean (natural scale)
+    mu_nat[i] <- Lmin + (Lmax_i[i] - Lmin) / (1 + exp( -(Midline[i] - xmid) / s ))
 
-    # logistic-like inner expression; add tiny eps to avoid log(0) if numerical rounding occurs
-    inner[i] <- Lmin_pos + ((Lmax_i[i] - Lmin_pos) / (1 + exp(-(Midline[i] - xmid)/s)))
-    mu[i] <- log( inner[i] + 1e-8 )   # tiny epsilon to avoid exact 0
+    # Defensive: ensure mu_nat > 0 before log
+    positive_flag[i] <- step(mu_nat[i])    # 1 if mu_nat > 0 else 0
+    mu_safe[i] <- mu_nat[i] * positive_flag[i] + (1.0E-6) * (1 - positive_flag[i])
+
+    # log-response
+    mu_log[i] <- log(mu_safe[i])
+    logL[i] ~ dnorm(mu_log[i], tau)
   }
 
-  # Priors on log-scale keep positivity and help sampling stability
-  logLmin     ~ dnorm(log(1), 1.0E-2)     # center near log(1); increase precision if you want narrower prior
-  logLmax0    ~ dnorm(log(10), 1.0E-2)
-  logLmax_gen ~ dnorm(0, 1.0E-2)
-  logLmax_side~ dnorm(0, 1.0E-2)
-  logLmax_int ~ dnorm(0, 1.0E-2)
-
-  # Midpoint and slope (xmid can be any real; s must be positive)
-  xmid ~ dnorm(0, 1.0E-4)
-  s    ~ dgamma(2, 1)    # shape=2, rate=1 gives a reasonable positive scale
-
-  # observation variance
-  sigma ~ dunif(0, 20)
+  # Observation variance
+  sigma ~ dunif(0, 50)
   tau <- pow(sigma, -2)
-}
-", file = "rootModel_safe.jags")
 
-# --- JAGS data list ---
+  # --- Priors on natural-scale parameters ---
+  # Keep Lmin and Lmax0 positive with lognormal priors (weakly informative)
+  Lmin  ~ dlnorm(log(1.0), 1.0)    # median ~1
+  Lmax0 ~ dlnorm(log(10.0), 1.0)   # median ~10
+
+  # genotype / side / interaction effects (can be + or -)
+  Lmax_gen  ~ dnorm(0, 0.01)
+  Lmax_side ~ dnorm(0, 0.01)
+  Lmax_int  ~ dnorm(0, 0.01)
+
+  # logistic midpoint and slope-scale
+  xmid ~ dnorm(median_Midline, 1.0E-4)  # center prior near data median (set from R)
+  s    ~ dgamma(2, 1)
+
+  # Derived monitors (optional)
+  for (i in 1:N) {
+    Lmax_monitor[i] <- Lmax_i[i]
+    mu_nat_monitor[i] <- mu_nat[i]
+  }
+}
+", file = "rootModel_formlog.jags")
+
+# --- Data list for JAGS ---
 data_list <- list(
-  N        = nrow(rootData),
-  logL     = rootData$logLength,
-  Midline  = rootData$Midline_s,
-  isMU     = rootData$WT,
-  isOuter  = rootData$outer
+  N        = nrow(df),
+  logL     = df$logLength,
+  Midline  = df$Midline,
+  isMU     = df$isMU,
+  isOuter  = df$isOuter,
+  # pass the median of Midline so JAGS can center xmid prior sensibly
+  median_Midline = median(df$Midline, na.rm = TRUE)
 )
 
-# --- Initial values ---
+# --- Initial values (matching parameter names in model) ---
 inits_fn <- function() {
   list(
-    Lmin = runif(1, 1, 10),
-    Lmax0 = runif(1, 5, 20),
-    Lmax_gen = rnorm(1, 0, 1),
-    Lmax_side = rnorm(1, 0, 1),
-    Lmax_int = rnorm(1, 0, 1),
-    xmid = rnorm(1, 0.25, 0.1),
-    s = runif(1, 0.01, 1),
-    sigma = runif(1, 0.1, 2)
+    Lmin = runif(1, max(0.1, quantile(df$Length, 0.01)), quantile(df$Length, 0.25)),
+    Lmax0 = runif(1, quantile(df$Length, 0.75), quantile(df$Length, 0.99)),
+    Lmax_gen = rnorm(1, 0, 0.1),
+    Lmax_side = rnorm(1, 0, 0.1),
+    Lmax_int = rnorm(1, 0, 0.1),
+    xmid = median(df$Midline, na.rm = TRUE),
+    s = runif(1, (max(df$Midline)-min(df$Midline))/50, (max(df$Midline)-min(df$Midline))/4),
+    sigma = runif(1, 0.1, sd(df$logLength))
   )
 }
 
-params <- c("Lmin","Lmax0","Lmax_gen","Lmax_side","Lmax_int","xmid","s","sigma")
+# --- Parameters to save ---
+params <- c("Lmin","Lmax0","Lmax_gen","Lmax_side","Lmax_int","xmid","s","sigma",
+            "Lmax_monitor","mu_nat_monitor")
 
 # --- Run JAGS ---
 jags_out <- jags(
   data = data_list,
   inits = inits_fn,
   parameters.to.save = params,
-  model.file = "rootModel.jags",
+  model.file = "rootModel_formlog.jags",
   n.chains = 4,
-  n.iter = 50000,
-  n.burnin = 10000,
-  n.thin = 2,
-  DIC = FALSE
+  n.iter = 25000,
+  n.burnin = 6000,
+  n.thin = 4,
+  DIC = TRUE
 )
 
+# --- Convert & Diagnostics ---
 print(jags_out)
 mcmc_chains <- as.mcmc(jags_out)
+```
 
-# --- Diagnostics like in your slides ---
-gelman.plot(mcmc_chains)
-gelman.diag(mcmc_chains)
-effectiveSize(mcmc_chains)
-raftery.diag(mcmc_chains)
-autocorr.plot(mcmc_chains)
+
+
+
+```{r}
+n_chains <- length(mcmc_chains)
+iters_per_chain <- niter(mcmc_chains)
+total_draws <- n_chains * iters_per_chain
+
+cat("MCMC Summary:\n")
+cat("  Number of chains: ", n_chains, "\n")
+cat("  Iterations per chain: ", iters_per_chain, "\n")
+cat("  Total posterior draws: ", total_draws, "\n\n")
+
+# --- Effective sample sizes ---
+ess_vals <- effectiveSize(mcmc_chains)
+cat("Effective Sample Sizes (ESS):\n")
+print(summary(ess_vals))
+
+# Show smallest and largest ESS for a quick check
+cat("\nRange of ESS:\n")
+cat("  Min ESS:", min(ess_vals), "\n")
+cat("  Max ESS:", max(ess_vals), "\n\n")
+
+# Optional: short summary table for top parameters
+ess_table <- sort(ess_vals, decreasing = TRUE)
+head(ess_table)
+```
+
+
+
+
+
+
+
+```{r}
+library(coda)
+
+# Convert JAGS output to mcmc object if not already
+mcmc_chains <- as.mcmc(jags_out)
+
+# Summary statistics (posterior mean, SD, quantiles)
 summary(mcmc_chains)
+
+effectiveSize(mcmc_chains)
+
+gelman.diag(mcmc_chains)
+
+autocorr.plot(mcmc_chains)
+raftery.diag(mcmc_chains)
+heidel.diag(mcmc_chains)
+
+png("mcmc_traceplots.png", width = 2000, height = 1500, res = 150)
+plot(mcmc_chains)
+dev.off()
+
+
 HPDinterval(mcmc_chains)
 
-mcmc_chains
+coda_summary <- summary(mcmc_chains)
+df_summary <- as.data.frame(coda_summary$statistics)
+df_quantiles <- as.data.frame(coda_summary$quantiles)
+head(df_summary)
+head(df_quantiles)
+
+coda_summary
 ```
+
 
 ```{r}
 
@@ -147,57 +235,139 @@ for (param in c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int", "xmid", "s")) {
 par(mfrow=c(1,1))
 
 ```
-
 ```{r}
-# --- Compute posterior summaries ---
-posterior_summary <- function(varname) {
-  x <- sims[[varname]]
-  c(mean = mean(x),
-    lower = quantile(x, 0.025),
-    upper = quantile(x, 0.975))
+# --- Required libraries ---
+library(dplyr)
+library(ggplot2)
+library(gridExtra)   # to arrange panels
+
+# --- Convert mcmc output to data.frame ---
+sims <- as.data.frame(as.matrix(mcmc_chains))
+cat("Sims columns (first 60):\n"); print(head(colnames(sims), 60))
+
+# --- helper: find param col and detect log-prefixed names ---
+get_col <- function(base) {
+  cand <- c(paste0("log", base), paste0("log", base, "."), base, paste0(base, "."))
+  found <- cand[cand %in% colnames(sims)]
+  if(length(found)==0) stop("No column found for ", base)
+  found[1]
+}
+is_logcol <- function(name) grepl("^log", name)
+
+cols <- list(
+  Lmax0 = get_col("Lmax0"),
+  Lmax_gen = get_col("Lmax_gen"),
+  Lmax_side = get_col("Lmax_side"),
+  Lmax_int = get_col("Lmax_int"),
+  Lmin = get_col("Lmin"),
+  xmid = get_col("xmid"),
+  s = get_col("s"),
+  sigma = get_col("sigma")
+)
+print(cols)
+
+# --- midline grid for smooth curve and discrete plotting points ---
+mid_grid <- seq(min(rootData$Midline_s, na.rm=TRUE), max(rootData$Midline_s, na.rm=TRUE), length.out = 200)
+
+# choose discrete midline points to show error bars (like slide uses 7 freq points)
+n_points <- 7
+pts_idx <- unique(round(seq(1, length(mid_grid), length.out = n_points)))
+pts_mid <- mid_grid[pts_idx]
+
+# function: given isMU/isOuter, compute posterior mu matrix (samples x mid_grid)
+compute_mu_matrix <- function(isMU=0, isOuter=0) {
+  n_samps <- nrow(sims)
+  G <- length(mid_grid)
+  mu_mat <- matrix(NA, nrow=n_samps, ncol=G)
+  for (ii in seq_len(n_samps)) {
+    # Lmin
+    Lmin_val <- sims[[cols$Lmin]][ii]
+    if (is_logcol(cols$Lmin)) Lmin_val <- exp(Lmin_val)
+    # Lmax: handle additive-log or additive-natural cases
+    if (is_logcol(cols$Lmax0)) {
+      logL <- sims[[cols$Lmax0]][ii] +
+              sims[[cols$Lmax_gen]][ii] * isMU +
+              sims[[cols$Lmax_side]][ii] * isOuter +
+              sims[[cols$Lmax_int]][ii] * isMU * isOuter
+      Lmax_val <- exp(logL)
+    } else {
+      Lmax_val <- sims[[cols$Lmax0]][ii] +
+                  sims[[cols$Lmax_gen]][ii] * isMU +
+                  sims[[cols$Lmax_side]][ii] * isOuter +
+                  sims[[cols$Lmax_int]][ii] * isMU * isOuter
+    }
+    xmid_val <- sims[[cols$xmid]][ii]
+    s_val    <- sims[[cols$s]][ii]
+    mu_mat[ii, ] <- Lmin_val + (Lmax_val - Lmin_val) / (1 + exp(-(mid_grid - xmid_val)/s_val))
+  }
+  mu_mat
 }
 
-# Apply to parameters
-params_summary <- t(sapply(c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int"), posterior_summary))
-params_summary <- as.data.frame(params_summary)
+# function: summarize mu_mat into mean and 95% CI (for grid and for discrete pts)
+summarize_mu <- function(mu_mat) {
+  list(mean = apply(mu_mat, 2, mean),
+       lo   = apply(mu_mat, 2, quantile, 0.025),
+       hi   = apply(mu_mat, 2, quantile, 0.975))
+}
 
-# Add a column for parameter names (for ggplot)
-params_summary$Parameter <- rownames(params_summary)
+# function: compute posterior predictive draws (adds observation noise sigma) and summarize
+summarize_predictive <- function(mu_mat) {
+  # sigma vector (if log sigma in sims, exponentiate; rarely log-sigma but handle it)
+  sigma_col <- cols$sigma
+  sigma_vec <- sims[[sigma_col]]
+  if (is_logcol(sigma_col)) sigma_vec <- exp(sigma_vec)
+  n_samps <- nrow(mu_mat)
+  G <- ncol(mu_mat)
+  pred_mat <- mu_mat + matrix(rnorm(n_samps * G, mean = 0, sd = rep(sigma_vec, each = G)),
+                              nrow = n_samps, ncol = G, byrow = FALSE)
+  list(mean = apply(pred_mat, 2, mean),
+       lo   = apply(pred_mat, 2, quantile, 0.025),
+       hi   = apply(pred_mat, 2, quantile, 0.975))
+}
 
-# --- Plot with error bars ---
-library(ggplot2)
+# --- make plots for each group (WT/Mutant × Inner/Outer) ---
+groups <- expand.grid(isMU = c(0,1), isOuter = c(0,1)) %>% arrange(isMU, isOuter)
+plots <- list()
 
-ggplot(params_summary, aes(x = Parameter, y = mean)) +
-  geom_point(size = 3) +
-  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
-  theme_minimal() +
-  labs(title = "Posterior Means and 95% Credible Intervals",
-       x = "Parameter",
-       y = "Estimate")
+for (g in seq_len(nrow(groups))) {
+  isMU_g <- groups$isMU[g]
+  isOuter_g <- groups$isOuter[g]
+  label_g <- paste0(ifelse(isMU_g==0,"WT","Mutant"), " / ", ifelse(isOuter_g==0,"Inner","Outer"))
+  
+  mu_mat <- compute_mu_matrix(isMU = isMU_g, isOuter = isOuter_g)
+  mu_sum <- summarize_mu(mu_mat)
+  pred_sum <- summarize_predictive(mu_mat)
+  
+  df_curve <- data.frame(
+    mid = mid_grid,
+    mu_mean = mu_sum$mean, mu_lo = mu_sum$lo, mu_hi = mu_sum$hi,
+    pred_mean = pred_sum$mean, pred_lo = pred_sum$lo, pred_hi = pred_sum$hi
+  )
+  pts_df <- df_curve[pts_idx, , drop=FALSE]
+  
+  p <- ggplot(df_curve, aes(x = mid)) +
+    # ribbon for posterior predictive interval (pale, like slide red)
+    geom_ribbon(aes(ymin = pred_lo, ymax = pred_hi), fill = "#f2c2c2", alpha = 0.5) +
+    # posterior mean (green)
+    geom_line(aes(y = mu_mean), color = "#1b9e77", size = 1.1) +
+    # posterior predictive mean (dashed black)
+    geom_line(aes(y = pred_mean), color = "black", linetype = "dashed", size = 0.9) +
+    # discrete error bars (vertical) at chosen mid points
+    geom_errorbar(data = pts_df, aes(x = mid, ymin = pred_lo, ymax = pred_hi), width = (max(mid_grid)-min(mid_grid))/50, color="black", size=0.8) +
+    geom_point(data = pts_df, aes(x = mid, y = pred_mean), color = "#D55E00", size = 2.8) +
+    labs(title = label_g, x = "Midline (scaled)", y = "Predicted cell length") +
+    theme_minimal(base_size = 13)
+  
+  plots[[label_g]] <- p
+}
 
+# show grid (2x2)
+grid.arrange(grobs = plots, ncol = 2)
 
 ```
 
-```{r}
-# Posterior means for fitted values
-fitted_mu <- colMeans(as.matrix(mcmc_chains)[, grep("^mu", colnames(as.matrix(mcmc_chains)))])
-residuals <- rootData$logLength - fitted_mu
 
-# QQ plot
-qqnorm(residuals, main="Normal Q-Q Plot of Residuals")
-qqline(residuals, col="red", lwd=2)
 
-# Boxplot by side
-boxplot(residuals ~ rootData$side, las=1,
-        ylab="Residuals", xlab="Side", col="gray90")
-abline(h=0, col="red", lwd=2)
-
-# Boxplot by root (random effect group)
-boxplot(residuals ~ rootData$root, las=1,
-        ylab="Residuals", xlab="Root ID", col="gray90")
-abline(h=0, col="red", lwd=2)
-
-```
 ```{r}
 # Example comparison of Lmax estimates
 freq_estimates <- summary(fit_nls)$coefficients[c("Lmax0", "Lmax_gen", "Lmax_side", "Lmax_int"), 1]
@@ -289,61 +459,408 @@ qqnorm(resids, main="Residual QQ Plot")
 qqline(resids, col="red", lwd=2)
 
 ```
-
 ```{r}
-# p2
+# ---- Prepare sims and show column names (sanity check) ----
 sims <- as.data.frame(as.matrix(mcmc_chains))
-library(ggplot2)
+cat("First 60 column names in sims:\n")
+print(head(colnames(sims), 60))
 
-mid_grid <- seq(min(rootData$Midline_s), max(rootData$Midline_s), length.out = 200)
-
-pred_mat <- sapply(1:nrow(sims), function(i) {
-  Lmax <- exp(sims$logLmax0[i])
-  Lmin <- exp(sims$logLmin[i])
-  xmid <- sims$xmid[i]
-  s    <- sims$s[i]
-
-  Lmin + (Lmax - Lmin) / (1 + exp(-(mid_grid - xmid)/s))
-})
-
-pred_df <- data.frame(
-  mid = mid_grid,
-  mean = apply(pred_mat, 1, mean),
-  lo = apply(pred_mat, 1, quantile, 0.025),
-  hi = apply(pred_mat, 1, quantile, 0.975)
-)
-
-ggplot(pred_df, aes(mid, mean)) +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.25) +
-  geom_line(size = 1.2) +
-  labs(title = "Posterior Logistic Growth Curve (WT Inner)",
-       x = "Midline", y = "Predicted Length") +
-  theme_minimal()
-pred_obs <- numeric(nrow(rootData))
-
-for (n in 1:nrow(rootData)) {
-  Lmax <- exp(
-    sims$logLmax0 +
-    sims$logLmax_gen * rootData$WT[n] +
-    sims$logLmax_side * rootData$outer[n] +
-    sims$logLmax_int * rootData$WT[n] * rootData$outer[n]
-  )
-
-  Lmin <- exp(sims$logLmin)
-
-  mu <- Lmin + (Lmax - Lmin) /
-        (1 + exp(-(rootData$Midline_s[n] - sims$xmid) / sims$s))
-
-  pred_obs[n] <- mean(log(mu))
+# ---- Helper: returns TRUE if sims contains a "log" version of param ----
+has_log_param <- function(base_name) {
+  log_name1 <- paste0("log", base_name)        # e.g. logLmax0
+  log_name2 <- paste0("log", base_name, ".")   # sometimes JAGS adds dots
+  return(any(c(log_name1, log_name2) %in% colnames(sims)))
+}
+# Helper: returns actual column name present (log or natural)
+get_param_col <- function(base_name) {
+  # prefer log-prefixed if present
+  cand <- c(paste0("log", base_name),
+            paste0("log", base_name, "."),
+            base_name,
+            paste0(base_name, "."))
+  found <- cand[cand %in% colnames(sims)]
+  if (length(found) == 0) stop("No column found for parameter: ", base_name)
+  return(found[1])
 }
 
-resids <- rootData$logLength - pred_obs
-boxplot(resids, main = "Residual Boxplot", ylab = "Residuals")
+# ---- Define which base parameters you expect ----
+base_params <- list(
+  Lmax0 = "Lmax0",
+  Lmax_gen = "Lmax_gen",
+  Lmax_side = "Lmax_side",
+  Lmax_int = "Lmax_int",
+  Lmin = "Lmin",
+  xmid = "xmid",
+  s = "s"
+)
+
+# ---- Resolve actual column names and whether to exponentiate ----
+param_map <- lapply(base_params, function(b) {
+  col <- get_param_col(b)
+  do_exp <- grepl("^log", col)  # if column name starts with "log", we exp()
+  list(colname = col, exp = do_exp)
+})
+print(param_map)   # inspect mapping
+
+# ---- build midline grid for plotting predicted curve ----
+mid_grid <- seq(min(rootData$Midline_s), max(rootData$Midline_s), length.out = 200)
+
+# ---- Build posterior predicted curves for example group: WT=0, outer=0 ----
+n_samps <- nrow(sims)
+pred_mat <- matrix(NA, nrow = n_samps, ncol = length(mid_grid))
+
+for (ii in seq_len(n_samps)) {
+  # extract parameter draws; use param_map to find colnames and whether to exp
+  get_draw <- function(base) {
+    info <- param_map[[base]]
+    val <- sims[[ info$colname ]][ii]
+    if (info$exp) val <- exp(val)
+    return(as.numeric(val))
+  }
+  Lmax0_draw <- get_draw("Lmax0")
+  Lmax_gen_draw <- get_draw("Lmax_gen")
+  Lmax_side_draw <- get_draw("Lmax_side")
+  Lmax_int_draw <- get_draw("Lmax_int")
+  Lmin_draw <- get_draw("Lmin")
+  xmid_draw <- get_draw("xmid")
+  s_draw    <- get_draw("s")
+
+  # for example WT=0 (isMU=0) inner (isOuter=0):
+  Lmax_draw <- Lmax0_draw *
+               exp(Lmax_gen_draw * 0) *    # will be 1 if Lmax_gen is on log scale? careful below
+               exp(Lmax_side_draw * 0) *
+               exp(Lmax_int_draw * 0 * 0)
+
+  # NOTE: if your model used additive log-parameters (logLmax0 + logLmax_gen*isMU ...),
+  # then the correct Lmax for each sample is exp(logLmax0 + logLmax_gen*isMU + ...)
+  # The code above assumes multiplicative factors when Lmax_gen etc are on natural scale.
+  # To handle both cases robustly we'll instead detect whether the individual columns are log versions
+  # and compute Lmax properly (override Lmax_draw). Safer approach below:
+  # Recompute Lmax_i using the column names directly:
+  # Construct the linear predictor for log(Lmax): sum of values for that sample across relevant columns (if present)
+  # If columns are on natural scale (not log), then use multiplicative combination.
+
+  # Let's build robustly:
+  # Attempt 1: if there exists logLmax0 column, treat model as additive on log scale:
+  if (any(grepl("^logLmax0", colnames(sims)))) {
+    # use the actual log-parameter columns if they exist
+    logLmax0 <- sims[[ get_param_col("Lmax0") ]][ii]
+    logLmax_gen <- sims[[ get_param_col("Lmax_gen") ]][ii]
+    logLmax_side <- sims[[ get_param_col("Lmax_side") ]][ii]
+    logLmax_int <- sims[[ get_param_col("Lmax_int") ]][ii]
+    # compute log Lmax for isMU=0,isOuter=0 example:
+    logLmax_i <- logLmax0 + logLmax_gen * 0 + logLmax_side * 0 + logLmax_int * 0 * 0
+    Lmax_i <- exp(logLmax_i)
+  } else {
+    # fallback: handle natural-scale columns (Lmax0 etc). If they are present, we trust they are already Lmax on natural scale.
+    Lmax0_nat <- sims[[ get_param_col("Lmax0") ]][ii]
+    Lmax_gen_nat <- sims[[ get_param_col("Lmax_gen") ]][ii]
+    Lmax_side_nat <- sims[[ get_param_col("Lmax_side") ]][ii]
+    Lmax_int_nat <- sims[[ get_param_col("Lmax_int") ]][ii]
+    # For natural-scale additive formulation used earlier in your R code:
+    # Lmax = (Lmax0 + Lmax_gen*isMU + Lmax_side*isOuter + Lmax_int*isMU*isOuter)
+    Lmax_i <- (Lmax0_nat + Lmax_gen_nat * 0 + Lmax_side_nat * 0 + Lmax_int_nat * 0 * 0)
+  }
+
+  # Similarly handle Lmin: if column is log-prefixed, exponentiate
+  Lmin_i <- if (param_map[["Lmin"]]$exp) exp(sims[[ param_map[["Lmin"]]$colname ]][ii]) else sims[[ param_map[["Lmin"]]$colname ]][ii]
+
+  # now compute predicted curve for this sample
+  pred_mat[ii, ] <- Lmin_i + (Lmax_i - Lmin_i) / (1 + exp(-(mid_grid - xmid_draw)/s_draw))
+}
+
+# ---- Summarize predicted curves and plot ----
+pred_df <- data.frame(
+  mid = mid_grid,
+  mean = apply(pred_mat, 2, mean),
+  lo = apply(pred_mat, 2, quantile, 0.025),
+  hi = apply(pred_mat, 2, quantile, 0.975)
+)
+
+library(ggplot2)
+ggplot(pred_df, aes(mid, mean)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.25) +
+  geom_line(size = 1.1) +
+  labs(title = "Posterior predicted curve (example: WT inner)",
+       x = "Midline (scaled)", y = "Predicted cell length") +
+  theme_minimal()
+
+# ---- Posterior predictive mean for each observation (log space) and residuals ----
+# We'll compute for each observation i the vector mu_post_samps (length = n_samps) and then take mean(log(mu_post))
+n_obs <- nrow(rootData)
+pred_obs_logmean <- numeric(n_obs)
+
+# Prepare column vectors for isMU and isOuter used in your data list
+isMU_col <- rootData$WT
+isOuter_col <- rootData$outer
+
+# For speed, extract columns once if present
+has_logLmax0 <- any(grepl("^logLmax0", colnames(sims)))
+# get names to use for each draw:
+col_logLmax0 <- if (has_logLmax0) get_param_col("Lmax0") else get_param_col("Lmax0")
+col_logLmax_gen <- get_param_col("Lmax_gen")
+col_logLmax_side <- get_param_col("Lmax_side")
+col_logLmax_int <- get_param_col("Lmax_int")
+col_Lmin <- get_param_col("Lmin")
+col_xmid <- get_param_col("xmid")
+col_s <- get_param_col("s")
+
+for (i in seq_len(n_obs)) {
+  # construct vector of mu_post for all samples
+  if (any(grepl("^logLmax0", colnames(sims)))) {
+    # additive on log scale
+    logLmax_linear <- sims[[col_logLmax0]] + sims[[col_logLmax_gen]] * isMU_col[i] +
+                      sims[[col_logLmax_side]] * isOuter_col[i] +
+                      sims[[col_logLmax_int]] * isMU_col[i] * isOuter_col[i]
+    Lmax_vec <- exp(logLmax_linear)
+    Lmin_vec <- if (param_map[["Lmin"]]$exp) exp(sims[[col_Lmin]]) else sims[[col_Lmin]]
+  } else {
+    # natural-scale additive
+    Lmax_vec <- sims[[col_logLmax0]] + sims[[col_logLmax_gen]] * isMU_col[i] +
+                sims[[col_logLmax_side]] * isOuter_col[i] +
+                sims[[col_logLmax_int]] * isMU_col[i] * isOuter_col[i]
+    Lmin_vec <- sims[[col_Lmin]]
+  }
+
+  xmid_vec <- sims[[col_xmid]]
+  s_vec    <- sims[[col_s]]
+
+  mu_post_vec <- Lmin_vec + (Lmax_vec - Lmin_vec) / (1 + exp(-(rootData$Midline_s[i] - xmid_vec) / s_vec))
+
+  # predicted log-length for obs i is log(mu_post) for each posterior sample; take posterior mean
+  pred_obs_logmean[i] <- mean(log(mu_post_vec))
+}
+
+# residuals on log scale
+resids <- rootData$logLength - pred_obs_logmean
+
+# ---- Diagnostics plots ----
+par(mfrow = c(2,2))
+boxplot(resids ~ rootData$side, main = "Residuals by Side", ylab = "log-obs - log-pred")
 abline(h = 0, col = "red", lwd = 2)
-qqnorm(resids, main="Residual QQ Plot")
-qqline(resids, col="red", lwd=2)
+
+boxplot(resids ~ rootData$root, las=2, main = "Residuals by Root ID", ylab="residual")
+abline(h = 0, col = "red", lwd = 2)
+
+qqnorm(resids, main = "QQ-plot residuals"); qqline(resids, col="red", lwd=2)
+
+hist(resids, main="Histogram of residuals", xlab="residual (log scale)", breaks=30)
+par(mfrow = c(1,1))
 
 ```
+```{r}
+# --- Required packages ---
+library(coda)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+# ----------------------------
+# 0. Basic checks & convert
+# ----------------------------
+# ensure sims is a data.frame of posterior draws
+sims <- as.data.frame(as.matrix(mcmc_chains))
+
+cat("Posterior columns (first 80):\n")
+print(head(colnames(sims), 80))
+
+# how many chains & iterations
+if (inherits(mcmc_chains, "mcmc.list")) {
+  n_chains <- length(mcmc_chains)
+  iters_per_chain <- niter(mcmc_chains)
+  total_draws <- nrow(sims)
+} else {
+  # fallback
+  n_chains <- NA
+  iters_per_chain <- NA
+  total_draws <- nrow(sims)
+}
+cat(sprintf("\nChains: %s | Iterations/chain: %s | Total posterior draws: %d\n\n",
+            n_chains, iters_per_chain, total_draws))
+
+# ----------------------------
+# 1. CODA summary + ESS + R-hat
+# ----------------------------
+coda_sum <- summary(mcmc_chains)
+stats_df <- as.data.frame(coda_sum$statistics)  # mean, sd, etc.
+qs_df <- as.data.frame(coda_sum$quantiles)      # 2.5% ... 97.5%
+
+# Effective sample size
+ESS <- effectiveSize(mcmc_chains)
+ESS_df <- data.frame(Parameter = names(ESS), ESS = as.numeric(ESS), row.names = NULL)
+
+# Gelman-Rubin (Rhat) if multiple chains
+if (inherits(mcmc_chains, "mcmc.list") && n_chains > 1) {
+  gr <- gelman.diag(mcmc_chains, multivariate = FALSE)
+  Rhat_mat <- as.data.frame(gr$psrf)   # point estimates + upper CI
+  Rhat_df <- data.frame(Parameter = rownames(Rhat_mat),
+                        Rhat = Rhat_mat[, "Point est."],
+                        Rhat_upper = Rhat_mat[, "Upper C.I."],
+                        row.names = NULL)
+} else {
+  Rhat_df <- data.frame(Parameter = rownames(stats_df), Rhat = NA, Rhat_upper = NA)
+}
+
+# Combine into one diagnostics table (merge by Parameter name)
+diag_tab <- stats_df %>%
+  tibble::rownames_to_column("Parameter") %>%
+  dplyr::select(Parameter, Mean = Mean, SD = SD) %>%
+  left_join(qs_df %>% tibble::rownames_to_column("Parameter") %>% 
+              select(Parameter, Q2.5 = `2.5%`, Q97.5 = `97.5%`),
+            by = "Parameter") %>%
+  left_join(ESS_df, by = "Parameter") %>%
+  left_join(Rhat_df %>% select(Parameter, Rhat, Rhat_upper), by = "Parameter")
+
+# show top diagnostics
+print(head(diag_tab, 30))
+# save diagnostics to CSV if you like:
+write.csv(diag_tab, "jags_parameter_diagnostics.csv", row.names = FALSE)
+
+# ----------------------------
+# 2. Plotting MCMC diagnostics
+# ----------------------------
+# To avoid "figure margins too large", save to file (large size)
+png("mcmc_trace_density.png", width = 2000, height = 1400, res = 150)
+plot(mcmc_chains)   # coda plot: trace + density for all parameters
+dev.off()
+cat("Saved trace+density plot to mcmc_trace_density.png\n")
+
+# Gelman plot (if multiple chains)
+if (inherits(mcmc_chains, "mcmc.list") && n_chains > 1) {
+  png("gelman_plot.png", width = 1200, height = 800, res = 150)
+  gelman.plot(mcmc_chains)
+  dev.off()
+  cat("Saved Gelman plot to gelman_plot.png\n")
+}
+
+# Autocorrelation plot for a few key params (top 6 by SD)
+top_params <- head(diag_tab %>% arrange(desc(SD)) %>% pull(Parameter), 6)
+png("autocorr_top_params.png", width = 1200, height = 800, res = 150)
+autocorr.plot(mcmc_chains[, top_params])
+dev.off()
+cat("Saved autocorrelation plot to autocorr_top_params.png\n")
+
+# HPD intervals for parameters (95%)
+hpd <- HPDinterval(mcmc_chains)
+hpd_df <- as.data.frame(hpd)
+hpd_df$Parameter <- rownames(hpd_df)
+# reorder columns and save
+hpd_df <- hpd_df[, c("Parameter", colnames(hpd_df)[1:2])]
+write.csv(hpd_df, "hpd_intervals.csv", row.names = FALSE)
+
+# ----------------------------
+# 3. Group posterior summaries & error-bar plot (Inner/Outer × WT/Mutant)
+#    We compute predicted cell length at a chosen midline (default: median of Midline_s)
+# ----------------------------
+# choose midline position for plotting (you can change to any value or a vector)
+midline_plot_val <- median(rootData$Midline_s, na.rm = TRUE)
+
+# helper to find parameter columns (works if jags used log-parameters or natural)
+get_col <- function(base) {
+  candidates <- c(paste0("log", base), paste0("log", base, "."), base, paste0(base, "."))
+  found <- candidates[candidates %in% colnames(sims)]
+  if (length(found) == 0) stop("No column found for parameter: ", base)
+  found[1]
+}
+is_logcol <- function(colname) grepl("^log", colname)
+
+cols_needed <- c("Lmax0","Lmax_gen","Lmax_side","Lmax_int","Lmin","xmid","s")
+cols_map <- sapply(cols_needed, get_col, USE.NAMES = TRUE)
+
+# build posterior samples of predicted length for each group
+groups <- expand.grid(isMU = c(0,1), isOuter = c(0,1))
+groups$label <- paste0(ifelse(groups$isMU==0,"WT","Mutant"), " / ", ifelse(groups$isOuter==0,"Inner","Outer"))
+
+posterior_by_group <- lapply(seq_len(nrow(groups)), function(g) {
+  isMU_g <- groups$isMU[g]
+  isOuter_g <- groups$isOuter[g]
+  # compute Lmax per draw:
+  if (is_logcol(cols_map["Lmax0"])) {
+    # additive on log scale: logLmax0 + logLmax_gen*isMU + ...
+    logL_lin <- sims[[ cols_map["Lmax0"] ]] +
+                sims[[ cols_map["Lmax_gen"] ]] * isMU_g +
+                sims[[ cols_map["Lmax_side"] ]] * isOuter_g +
+                sims[[ cols_map["Lmax_int"] ]] * (isMU_g * isOuter_g)
+    Lmax_vec <- exp(logL_lin)
+  } else {
+    Lmax_vec <- sims[[ cols_map["Lmax0"] ]] +
+                sims[[ cols_map["Lmax_gen"] ]] * isMU_g +
+                sims[[ cols_map["Lmax_side"] ]] * isOuter_g +
+                sims[[ cols_map["Lmax_int"] ]] * (isMU_g * isOuter_g)
+  }
+  # Lmin:
+  Lmin_col <- cols_map["Lmin"]
+  Lmin_vec <- sims[[Lmin_col]]
+  if (is_logcol(Lmin_col)) Lmin_vec <- exp(Lmin_vec)
+  # xmid and s:
+  xmid_vec <- sims[[ cols_map["xmid"] ]]
+  s_vec    <- sims[[ cols_map["s"] ]]
+  # predicted mu at chosen midline:
+  mu_vec <- Lmin_vec + (Lmax_vec - Lmin_vec) / (1 + exp(-(midline_plot_val - xmid_vec)/s_vec))
+  # Also create predictive draws adding obs noise if sigma available
+  sigma_col <- NULL
+  if (any(grepl("^sigma", colnames(sims)))) sigma_col <- colnames(sims)[grepl("^sigma", colnames(sims))][1]
+  if (!is.null(sigma_col)) {
+    sigma_vec <- sims[[ sigma_col ]]
+    if (is_logcol(sigma_col)) sigma_vec <- exp(sigma_vec)
+    pred_vec <- mu_vec + rnorm(length(mu_vec), mean = 0, sd = sigma_vec)
+  } else {
+    pred_vec <- mu_vec
+  }
+  data.frame(group = groups$label[g],
+             mu = mu_vec,
+             pred = pred_vec)
+})
+
+post_df <- do.call(rbind, posterior_by_group)
+
+# Summarize posterior for plotting: use predictive 'pred' (includes measurement noise)
+summary_df <- post_df %>%
+  group_by(group) %>%
+  summarize(mean = mean(pred),
+            lower = quantile(pred, 0.025),
+            upper = quantile(pred, 0.975),
+            median = median(pred),
+            n = n(), .groups = "drop")
+
+# Error-bar plot (grouped by genotype/side)
+summary_df$Genotype <- ifelse(grepl("^WT", summary_df$group), "WT", "Mutant")
+summary_df$Side <- ifelse(grepl("Inner$", summary_df$group), "Inner", "Outer")
+
+ggp <- ggplot(summary_df, aes(x = Side, y = mean, color = Genotype)) +
+  geom_point(position = position_dodge(width = 0.5), size = 3) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), position = position_dodge(width = 0.5), width = 0.15) +
+  labs(title = sprintf("Predicted cell length at midline = %.1f (posterior predictive)", midline_plot_val),
+       y = "Predicted cell length (mean ± 95% CI)", x = "Side (Inner / Outer)") +
+  theme_minimal(base_size = 14)
+
+ggsave("inner_outer_genotype_errorbars.png", ggp, width = 7, height = 5, dpi = 200)
+print(ggp)
+cat("Saved inner/outer genotype errorbar plot to inner_outer_genotype_errorbars.png\n")
+
+# ----------------------------
+# 4. Print key diagnostics: ESS and Rhat for selected parameters
+# ----------------------------
+selected_params <- c("Lmax0","Lmax_gen","Lmax_side","Lmax_int","Lmin","xmid","s")
+selected_cols <- sapply(selected_params, function(p) {
+  cand <- c(paste0("log", p), p, paste0(p, "."))
+  found <- cand[cand %in% colnames(sims)]
+  if (length(found)==0) return(NA) else return(found[1])
+}, USE.NAMES = TRUE)
+
+diag_selected <- diag_tab %>% filter(Parameter %in% selected_cols) %>%
+  mutate(ParamClean = selected_params[match(Parameter, selected_cols)]) %>%
+  select(ParamClean, Mean, SD, Q2.5, Q97.5, ESS, Rhat)
+
+print(diag_selected)
+
+# save
+write.csv(diag_selected, "selected_param_diagnostics.csv", row.names = FALSE)
+cat("Diagnostics for selected parameters saved to selected_param_diagnostics.csv\n")
+
+```
+
+
 
 
 

@@ -1,0 +1,43 @@
+
+model {
+  for (i in 1:N) {
+    # Build Lmax on natural scale from fixed effects (additive)
+    Lmax_i[i] <- Lmax0 + Lmax_gen * isMU[i] + Lmax_side * isOuter[i] + Lmax_int * isMU[i] * isOuter[i]
+
+    # Lmin must be positive -> we put a prior on Lmin (natural scale)
+    # Compute the 4PL mean (natural scale)
+    mu_nat[i] <- Lmin + (Lmax_i[i] - Lmin) / (1 + exp( -(Midline[i] - xmid) / s ))
+
+    # Defensive: ensure mu_nat > 0 before log
+    positive_flag[i] <- step(mu_nat[i])    # 1 if mu_nat > 0 else 0
+    mu_safe[i] <- mu_nat[i] * positive_flag[i] + (1.0E-6) * (1 - positive_flag[i])
+
+    # log-response
+    mu_log[i] <- log(mu_safe[i])
+    logL[i] ~ dnorm(mu_log[i], tau)
+  }
+
+  # Observation variance
+  sigma ~ dunif(0, 50)
+  tau <- pow(sigma, -2)
+
+  # --- Priors on natural-scale parameters ---
+  # Keep Lmin and Lmax0 positive with lognormal priors (weakly informative)
+  Lmin  ~ dlnorm(log(1.0), 1.0)    # median ~1
+  Lmax0 ~ dlnorm(log(10.0), 1.0)   # median ~10
+
+  # genotype / side / interaction effects (can be + or -)
+  Lmax_gen  ~ dnorm(0, 0.01)
+  Lmax_side ~ dnorm(0, 0.01)
+  Lmax_int  ~ dnorm(0, 0.01)
+
+  # logistic midpoint and slope-scale
+  xmid ~ dnorm(median_Midline, 1.0E-4)  # center prior near data median (set from R)
+  s    ~ dgamma(2, 1)
+
+  # Derived monitors (optional)
+  for (i in 1:N) {
+    Lmax_monitor[i] <- Lmax_i[i]
+    mu_nat_monitor[i] <- mu_nat[i]
+  }
+}
