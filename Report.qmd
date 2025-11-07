@@ -5,7 +5,6 @@ date: "November 2025"
 format: 
   pdf:
     documentclass: article
-    fontsize: 11pt
 geometry: margin=1in
 execute: 
   warning: false
@@ -15,3 +14,85 @@ execute:
 
 # 1. Background
 
+Root growth in the rice plant is characterized by a distinct rotational motion called circumnutation. Researchers want to better understand this process. Experimental data was collected on the developing roots of two strains of rice plants, one a wild type (WT) variety and the other a mutant (MU) variety that lacks circumnutation. In particular, cell length and position measurements were collected on cells on the inner and outer curves of a sample of roots representing the two genetic strains. The protocol utilized in this study is as follows:
+
+1.  The mid–line on the central slice of a root and its point of maximum curvature are identified
+
+2.  The lengths of the cells on the inner and outer curves of the root slice are measured and recorded for those cells falling in a window around the point of maximum curvature.
+
+This process was repeated on nine WT and eleven MU genotype roots. By understanding the differences in growth based on side and genotype, researchers can gain a better understanding of circumnutation and rice plants.
+
+## Research Questions
+
+Can the physical mechanism behind root circumnutation in the wild type plants be explained by differential patterns of cell growth on opposing sides of the root? Is there evidence that these patterns are diminished in the mutant genotype?
+
+# 2. Data and Frequentist Model
+
+To answer these questions we examined the resulting dataset of the process described above. The dataset contains: length, midline (distance from root tip along midline), root ID ((WT)1-9 \$ (MU)1-11), side (inner or outer), and genotype (wild type (WT) & mutant (MU)) for each observation. We conducted exploratory data analysis to see how length varied by root, side, and genotype. For WT roots, there is a visible difference between inner and outer cell lengths, and this difference varies by root id (Fig 1). For MU roots, the inner and outer cell lengths tend to be similar (Fig 2). A combined analysis showed that inner and outer cell lengths are distributed the same for MU roots, while outer tends to be longer than inner cells for WT roots (Fig 3).
+
+```{r}
+#| label: read_data_and_EDA
+
+library(tidyverse)
+load("rootData.RData")
+plot_1 <- rootData |>
+  filter(Genotype == "WT") |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.005) + 
+    geom_smooth(method = "loess", se = FALSE) +
+    facet_wrap(~ root, scales = "free_x") +
+    theme_bw() +
+    labs(title = "Cell Length Along the Root Midline for Wild Type",
+         x = "Distance along root (µm)",
+         y = "Cell length (µm)",
+         color = "Side of Root") +
+  scale_color_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
+
+
+plot_2 <- rootData |>
+  filter(Genotype == "MU") |>
+  ggplot(aes(x = Midline, y = Length, color = side)) +
+    geom_point(alpha = 0.005) + 
+    geom_smooth(method = "loess", se = FALSE) +
+    facet_wrap(~ root, scales = "free_x") +
+    theme_bw() +
+    labs(title = "Cell Length Along the Root Midline for Mutant Type",
+         x = "Distance along root (µm)",
+         y = "Cell length (µm)",
+         color = "Side of Root") +
+  scale_color_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
+
+plot_3 <- ggplot(rootData, aes(x = side, y = Length, fill = side)) +
+  geom_boxplot() +
+  facet_wrap(~ Genotype) +
+  theme_bw() +
+  labs(title = "Distribution of Cell Lengths by Genotype and Side",
+       x = "Root Side",
+       y = "Cell Length (µm)",
+       fill = "Side") +
+  scale_fill_manual(values = c("Inner" = "coral", "Outer" = "darkseagreen"))
+
+```
+
+# 3. Bayesian Model
+
+# 4. Shortcomings and Assumptions
+
+# 5. Conclusion
+
+#6. Appendix
+
+```{r}
+#| fig-cap: The difference between inner and outer cell lengths changes root by root
+plot_1
+```
+
+```{r}
+#| fig-cap: There is only slight differences between inner and outer cell lengths
+plot_2
+```
+
+```{r}
+#| fig-cap: MU cells have similar inner vs outer lengths; WT outer has longer lengths than inner
+plot_3
+```
