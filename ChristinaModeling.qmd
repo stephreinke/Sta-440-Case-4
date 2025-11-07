@@ -74,7 +74,7 @@ wt_data <- filter(rootData, Genotype == "WT") %>%
   mutate(root = droplevels(root))
 
 p_wt <- ggplot(wt_data, aes(x = Midline_scaled, y = Length, color = side)) +
-  geom_point(alpha = 0.4, size = 2) +
+  geom_point(alpha = 0.4, size = 2) + 
   geom_line(aes(y = predicted), linewidth = 1.2) +
   facet_wrap(~ root, ncol = 3) +
   scale_color_manual(values = c("Inner" = "#E41A1C", "Outer" = "#377EB8")) +
