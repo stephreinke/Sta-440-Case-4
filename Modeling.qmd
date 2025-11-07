@@ -11,35 +11,7 @@ library(tidyr)
 library(MASS)   # for mvrnorm in bootstrap
 ```
 
-```{r}
-library(nlme)
-library(dplyr)
 
-# canonicalize names
-rootData <- rootData %>% rename(Midline = Midline, Length = Length, side = side, root = root, Genotype = Genotype)
-
-# 4PL formula
-form4pl <- Length ~ Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid)/s))
-
-# robust start from global data
-Lmin0 <- quantile(rootData$Length, 0.05, na.rm=TRUE)
-Lmax0 <- quantile(rootData$Length, 0.95, na.rm=TRUE)
-xmid0 <- median(rootData$Midline, na.rm=TRUE)
-s0    <- (max(rootData$Midline, na.rm=TRUE) - min(rootData$Midline, na.rm=TRUE))/10
-
-start0 <- list(Lmin = as.numeric(Lmin0), Lmax = as.numeric(Lmax0), xmid = as.numeric(xmid0), s = as.numeric(s0))
-
-fixed_nls <- try(nls(form4pl, data = rootData, start = start0, control = nls.control(maxiter=500)), silent = TRUE)
-if(inherits(fixed_nls, "try-error")) stop("Fixed-effects nls failed; paste the error here.")
-summary(fixed_nls)
-
-nls_per_root <- nlsList(Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s)) | root,
-                        data = rootData,
-                        start = start0)
-summary(nls_per_root)
-
-
-```
 
 ```{r}
 library(dplyr)
@@ -91,6 +63,7 @@ delta_side |>
   kable()
 
 ```
+
 ```{r}
 # Load libraries
 library(dplyr)
