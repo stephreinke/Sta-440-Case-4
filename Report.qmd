@@ -1,0 +1,17 @@
+---
+title: "Sta 440 Case 4"
+author: "Christina Lee, Steph Reinke"
+date: "November 2025"
+format: 
+  pdf:
+    documentclass: article
+    fontsize: 11pt
+geometry: margin=1in
+execute: 
+  warning: false
+  message: false
+  echo: false
+---
+
+# 1. Background
+
