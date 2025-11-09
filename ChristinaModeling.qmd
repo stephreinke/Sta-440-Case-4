@@ -9,599 +9,118 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(MASS)   # for mvrnorm in bootstrap
+load("rootData.RData")
 ```
 
 ```{r}
+# GOOD MODEL
 library(nlme)
-library(dplyr)
-
-# canonicalize names
-rootData <- rootData %>% rename(Midline = Midline, Length = Length, side = side, root = root, Genotype = Genotype)
-
-# 4PL formula
-form4pl <- Length ~ Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid)/s))
-
-# robust start from global data
-Lmin0 <- quantile(rootData$Length, 0.05, na.rm=TRUE)
-Lmax0 <- quantile(rootData$Length, 0.95, na.rm=TRUE)
-xmid0 <- median(rootData$Midline, na.rm=TRUE)
-s0    <- (max(rootData$Midline, na.rm=TRUE) - min(rootData$Midline, na.rm=TRUE))/10
-
-start0 <- list(Lmin = as.numeric(Lmin0), Lmax = as.numeric(Lmax0), xmid = as.numeric(xmid0), s = as.numeric(s0))
-
-fixed_nls <- try(nls(form4pl, data = rootData, start = start0, control = nls.control(maxiter=500)), silent = TRUE)
-if(inherits(fixed_nls, "try-error")) stop("Fixed-effects nls failed; paste the error here.")
-summary(fixed_nls)
-
-```
-
-```{r}
-# Load libraries
-library(dplyr)
-library(minpack.lm)
-
-# Make sure your data frame has these columns:
-# Midline, Length, side (Inner/Outer), Genotype (WT/MU)
-df <- rootData %>%
-  rename(Midline = Midline, Length = Length, side = side, Genotype = Genotype) %>%
-  mutate(
-    Genotype = factor(Genotype),
-    side = factor(side)
-  )
-
-# Create indicator variables
-df <- df %>%
-  mutate(isMU = ifelse(Genotype == "MU", 1, 0),
-         isOuter = ifelse(side == "Outer", 1, 0))
-
-# 4-parameter logistic with Lmax depending on genotype & side
-form_log <- log(Length) ~ Lmin + ((Lmax0 + Lmax_gen * isMU + Lmax_side * isOuter +
-            Lmax_int * isMU * isOuter) - Lmin) /
-          (1 + exp(-(Midline - xmid)/s)
-)
-
-
-# Starting values from a pooled simple nls
-start_vals <- list(
-  Lmin = quantile(df$Length, 0.05, na.rm=TRUE),
-  Lmax0 = quantile(df$Length, 0.95, na.rm=TRUE),
-  Lmax_gen = 0, Lmax_side = 0, Lmax_int = 0,
-  xmid = median(df$Midline, na.rm=TRUE),
-  s = (max(df$Midline) - min(df$Midline))/10
-)
-
-# Fit model (uses nlsLM for robustness but this is still just nonlinear regression)
-fit_rootType <- nlsLM(form_log, data = df, start = start_vals,
-                      control = nls.lm.control(maxiter = 1000))
-
-# See full summary
-summary(fit_rootType)
-
-```
-
-```{r}
-# Extract residuals and fitted values
-res <- residuals(fit_rootType)
-fit_vals <- fitted(fit_rootType)
-
-# Basic residual vs fitted plot
-plot(fit_vals, res,
-     main = "Residuals vs Fitted",
-     xlab = "Fitted values",
-     ylab = "Residuals",
-     pch = 19, col = "steelblue")
-abline(h = 0, col = "red", lwd = 2)
-
-ggplot(df, aes(x = fit_vals, y = res)) +
-  geom_point(color = "steelblue") +
-  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
-  facet_wrap(~ root, scales = "free") +
-  labs(
-    title = "Residuals vs Fitted by Root",
-    x = "Fitted values",
-    y = "Residuals"
-  ) +
-  theme_bw()
-
-ggplot(df, aes(x = fit_vals, y = res)) +
-  geom_point(color = "steelblue") +
-  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
-  facet_wrap(~ side, scales = "free") +
-  labs(
-    title = "Residuals vs Fitted by Side",
-    x = "Fitted values",
-    y = "Residuals"
-  ) +
-  theme_bw()
-
-ggplot(df, aes(x = fit_vals, y = res)) +
-  geom_point(color = "steelblue") +
-  geom_hline(yintercept = 0, color = "red", linewidth = 1) +
-  facet_wrap(~ Genotype, scales = "free") +
-  labs(
-    title = "Residuals vs Fitted by Genotype",
-    x = "Fitted values",
-    y = "Residuals"
-  ) +
-  theme_bw()
-
-# Residuals vs predictor (Midline)
-plot(df$Midline, res,
-     main = "Residuals vs Midline",
-     xlab = "Midline (predictor)",
-     ylab = "Residuals",
-     pch = 19, col = "darkorange")
-abline(h = 0, col = "red", lwd = 2)
-
-# Histogram of residuals
-hist(res, breaks = 20, col = "lightgray",
-     main = "Histogram of Residuals", xlab = "Residuals")
-
-# Normal Q-Q plot to check normality
-qqnorm(res, main = "Normal Q-Q Plot of Residuals")
-qqline(res, col = "red", lwd = 2)
-
-# Shapiro–Wilk test for normality (only valid if n < 5000)
-shapiro.test(res)
-
-# Breusch–Pagan test for heteroscedasticity
-install.packages("lmtest") if needed
-library(lmtest)
-bptest(res ~ fit_vals)
-
-# If you want a summary of residuals
-summary(res)
-
-```
-
-
-```{r}
-# install.packages("minpack.lm")  # if needed
-library(dplyr)
-library(minpack.lm)
 library(ggplot2)
-
-# --- prepare data (adjust column names if necessary) ---
-df <- rootData %>%
-  rename(Midline = any_of("Midline"),
-         Length  = any_of("Length"),
-         side    = any_of("side"),
-         root    = any_of("root"),
-         Genotype= any_of("Genotype")) %>%
-  filter(!is.na(Midline) & !is.na(Length) & !is.na(side) & !is.na(root) & !is.na(Genotype)) %>%
-  mutate(side = as.character(side), Genotype = as.character(Genotype), root = as.character(root))
-
-# ---- helper: fit nlsLM for one (root,side) ----
-fit_one <- function(subdf) {
-  # require a minimum number of points
-  if(nrow(subdf) < 8) return(list(ok = FALSE, reason = "too few points"))
-  # scale Midline to 0-1 within the root for numeric stability
-  mini <- min(subdf$Midline); maxi <- max(subdf$Midline)
-  if(maxi == mini) return(list(ok = FALSE, reason = "zero midline range"))
-  subdf <- subdf %>% mutate(Mid_s = (Midline - mini) / (maxi - mini))
-  # starting values from group quantiles
-  st <- list(
-    Lmin = as.numeric(quantile(subdf$Length, 0.05, na.rm=TRUE)),
-    Lmax = as.numeric(quantile(subdf$Length, 0.95, na.rm=TRUE)),
-    xmid = 0.5,
-    s    = 0.15
-  )
-  # formula in scaled coords
-  fml <- Length ~ Lmin + (Lmax - Lmin) / (1 + exp(-(Mid_s - xmid)/s))
-  fit <- try(nlsLM(fml, data = subdf, start = st,
-                   control = nls.lm.control(maxiter=1000, ftol=1e-8, ptol=1e-8)),
-             silent = TRUE)
-  if(inherits(fit,"try-error")) {
-    return(list(ok = FALSE, reason = attr(fit,"condition")$message))
-  }
-  # get coeffs and standard errors
-  sfit <- summary(fit)
-  co <- coef(fit)
-  se <- sfit$parameters[, "Std. Error"]
-  # convert xmid back to original Midline units for reporting
-  xmid_orig <- co["xmid"] * (maxi - mini) + mini
-  # return metadata + fit object
-  return(list(ok = TRUE, fit = fit, co = co, se = se, mini = mini, maxi = maxi, xmid_orig = xmid_orig, n = nrow(subdf)))
-}
-
-# ---- loop over all root × side combos, store results ----
-roots <- sort(unique(df$root))
-sides <- sort(unique(df$side))
-out_list <- list()
-for(r in roots) {
-  for(s in sides) {
-    subdf <- df %>% filter(root == r, side == s)
-    key <- paste(r, s, sep = "_")
-    res <- fit_one(subdf)
-    if(res$ok) {
-      out_list[[key]] <- tibble(root = r, side = s, Genotype = unique(subdf$Genotype),
-                                Lmin = as.numeric(res$co["Lmin"]),
-                                Lmax = as.numeric(res$co["Lmax"]),
-                                xmid = as.numeric(res$xmid_orig),
-                                s = as.numeric(res$co["s"]),
-                                se_Lmin = res$se["Lmin"],
-                                se_Lmax = res$se["Lmax"],
-                                se_xmid = res$se["xmid"],
-                                se_s = res$se["s"],
-                                n = res$n)
-    } else {
-      message("Fit failed for ", key, ": ", res$reason)
-      out_list[[key]] <- tibble(root = r, side = s, Genotype = unique(subdf$Genotype),
-                                Lmin = NA_real_, Lmax = NA_real_, xmid = NA_real_, s = NA_real_,
-                                se_Lmin = NA_real_, se_Lmax = NA_real_, se_xmid = NA_real_, se_s = NA_real_,
-                                n = nrow(subdf))
-    }
-  }
-}
-params_tbl <- bind_rows(out_list)
-print(params_tbl)
-
-# ---- compute per-root Outer - Inner differences for Lmax ----
-# pivot wider so inner and outer for each root are side-by-side
-wide <- params_tbl %>%
-  select(root, Genotype, side, Lmax, se_Lmax, n) %>%
-  tidyr::pivot_wider(names_from = side, values_from = c(Lmax, se_Lmax, n), names_sep = "_")
-
-# keep only roots that have both inner and outer fitted
-wide2 <- wide %>% filter(!is.na(Lmax_Inner) & !is.na(Lmax_Outer))
-# compute difference and approximate SE (assume independent fits: var diff = var_in + var_out)
-wide2 <- wide2 %>%
-  mutate(delta_Lmax = Lmax_Outer - Lmax_Inner,
-         se_delta = sqrt( (se_Lmax_Outer^2) + (se_Lmax_Inner^2) ),
-         z = delta_Lmax / se_delta,
-         p = 2*pnorm(-abs(z)))
-
-print(wide2 %>% select(root, Genotype, Lmax_Inner, Lmax_Outer, delta_Lmax, se_delta, p))
-
-# ---- summarize by genotype: mean delta, sd, n_roots, t-test ----
-summary_by_gen <- wide2 %>%
-  group_by(Genotype) %>%
-  summarize(n_roots = n(),
-            mean_delta = mean(delta_Lmax),
-            sd_delta = sd(delta_Lmax),
-            se_mean = sd_delta / sqrt(n_roots)) %>%
-  ungroup()
-print(summary_by_gen)
-
-# t-test comparing delta between genotypes (two-sample t-test)
-if(length(unique(wide2$Genotype))==2) {
-  g1 <- unique(wide2$Genotype)[1]; g2 <- unique(wide2$Genotype)[2]
-  vec1 <- wide2 %>% filter(Genotype==g1) %>% pull(delta_Lmax)
-  vec2 <- wide2 %>% filter(Genotype==g2) %>% pull(delta_Lmax)
-  ttest <- t.test(vec1, vec2)
-  print(ttest)
-}
-
-# ---- optional: parametric bootstrap for genotype mean delta CI (slower) ----
-bootstrap_gen_delta <- function(df_wide, B = 1000, seed = 42) {
-  set.seed(seed)
-  boot_means <- numeric(B)
-  roots_list <- df_wide$root
-  for(b in 1:B) {
-    # resample per-root residual noise by simulating predicted curves + noise using per-root SE
-    sim_delta <- numeric(length(roots_list))
-    for(i in seq_along(roots_list)) {
-      row <- df_wide[i,]
-      # simulate Lmax_inner and Lmax_outer from normal with mean=est, sd=se (approx)
-      li <- rnorm(1, mean = row$Lmax_Inner, sd = ifelse(is.na(row$se_Lmax_Inner), 1e6, row$se_Lmax_Inner))
-      lo <- rnorm(1, mean = row$Lmax_Outer, sd = ifelse(is.na(row$se_Lmax_Outer), 1e6, row$se_Lmax_Outer))
-      sim_delta[i] <- lo - li
-    }
-    boot_means[b] <- mean(sim_delta, na.rm = TRUE)
-  }
-  c(mean = mean(boot_means), ci_lower = quantile(boot_means, 0.025), ci_upper = quantile(boot_means, 0.975))
-}
-
-# example bootstrap for WT (change to your genotype names if needed)
-wide_WT <- wide2 %>% filter(Genotype == "WT")
-if(nrow(wide_WT) >= 2) {
-  cat("Bootstrapping WT mean delta (this may take a moment)...\n")
-  boot_WT <- bootstrap_gen_delta(wide_WT, B = 500)
-  print(boot_WT)
-}
-
-# ---- visualization: per-root deltas and group means ----
-ggplot(wide2, aes(x = Genotype, y = delta_Lmax)) +
-  geom_jitter(width = 0.15, height = 0, size = 2) +
-  stat_summary(fun=mean, geom="point", shape=23, size=4, fill="white") +
-  theme_bw() +
-  labs(title="Per-root Outer − Inner Lmax differences", y = "Lmax Outer − Inner (µm)", x = "Genotype")
-
-```
-
-
-```{r}
-# installs if needed:
-# install.packages("minpack.lm")
-
 library(dplyr)
-library(minpack.lm)
 
-# prepare data (safe renaming + center Midline)
-df <- rootData %>%
-  rename(Midline = any_of("Midline"),
-         Length  = any_of("Length"),
-         side    = any_of("side"),
-         root    = any_of("root"),
-         Genotype= any_of("Genotype")) %>%
-  mutate(side = as.character(side), Genotype = as.character(Genotype)) %>%
-  filter(!is.na(Midline) & !is.na(Length) & !is.na(side) & !is.na(Genotype))
+# Check unique values first
+cat("Unique Genotypes:", unique(rootData$Genotype), "\n")
+cat("Unique Sides:", unique(rootData$side), "\n")
+cat("Unique Roots:", unique(rootData$root), "\n\n")
 
-# center Midline for stability
-df$Mid_c <- df$Midline - mean(df$Midline, na.rm = TRUE)
-
-# helper: fit one group robustly with group-specific starts
-fit_group <- function(dat_group, method_prefer = c("nlsLM","nls")) {
-  method_prefer <- match.arg(method_prefer)
-  if(nrow(dat_group) < 6) {
-    stop("Not enough rows to fit (need >=6).")
-  }
-  # group-specific starts: Lmin ~ 5th pct, Lmax ~ 95th pct, xmid ~ median, s ~ range/8
-  st <- list(
-    Lmin  = as.numeric(quantile(dat_group$Length, 0.05, na.rm = TRUE)),
-    Lmax  = as.numeric(quantile(dat_group$Length, 0.95, na.rm = TRUE)),
-    xmid  = as.numeric(median(dat_group$Mid_c, na.rm = TRUE)),
-    s     = as.numeric((max(dat_group$Mid_c, na.rm = TRUE) - min(dat_group$Mid_c, na.rm = TRUE))/8)
-  )
-  # formula using centered Mid_c
-  fml <- Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Mid_c - xmid)/s))
-  # try nlsLM first (robust), then fallback to nls
-  fit <- NULL
-  if(method_prefer == "nlsLM") {
-    fit <- try(nlsLM(fml, data = dat_group, start = st,
-                     control = nls.lm.control(maxiter = 1000, ftol = 1e-8, ptol = 1e-8)),
-               silent = TRUE)
-    if(inherits(fit, "try-error")) fit <- NULL
-  }
-  if(is.null(fit)) {
-    fit2 <- try(nls(fml, data = dat_group, start = st,
-                    control = nls.control(maxiter = 500, tol = 1e-6)),
-                silent = TRUE)
-    if(!inherits(fit2, "try-error")) fit <- fit2
-  }
-  if(is.null(fit)) stop("Both nlsLM and nls failed for this group (bad start or insufficient info).")
-  return(fit)
-}
-
-# groups to fit
-groups <- expand.grid(Genotype = c("WT","MU"), side = c("Inner","Outer"), stringsAsFactors = FALSE)
-fits <- list()
-failures <- list()
-
-for(i in seq_len(nrow(groups))) {
-  g <- groups[i, ]
-  grp_df <- filter(df, Genotype == g$Genotype & side == g$side)
-  grp_name <- paste0(g$Genotype, "_", g$side)
-  message("Fitting ", grp_name, " (n=", nrow(grp_df), ") ...")
-  if(nrow(grp_df) < 6) {
-    message("  SKIP: too few points.")
-    failures[[grp_name]] <- "too few points"
-    next
-  }
-  tryCatch({
-    fit <- fit_group(grp_df, method_prefer = "nlsLM")
-    fits[[grp_name]] <- fit
-    message("  OK")
-  }, error = function(e) {
-    message("  FAIL: ", e$message)
-    failures[[grp_name]] <- e$message
-  })
-}
-
-# build summary table from successful fits
-rows <- list()
-for(name in names(fits)) {
-  co <- coef(fits[[name]])
-  rows[[name]] <- data.frame(
-    Group = name,
-    Genotype = strsplit(name, "_")[[1]][1],
-    Side = strsplit(name, "_")[[1]][2],
-    Lmin = co["Lmin"],
-    Lmax = co["Lmax"],
-    xmid = co["xmid"],
-    s = co["s"],
-    stringsAsFactors = FALSE
-  )
-}
-if(length(rows) == 0) {
-  stop("No successful fits. Check data and starting values.")
-}
-summary_table <- do.call(rbind, rows)
-rownames(summary_table) <- NULL
-
-# print results
-message("\nSuccessful fits:")
-print(summary_table)
-
-if(length(failures) > 0) {
-  message("\nFailures for groups:")
-  print(failures)
-}
-
-# return summary_table invisibly
-invisible(summary_table)
-
-
-```
-```{r}
-# Load libraries
-library(dplyr)
-library(broom)
-
-# Make sure categorical variables are factors
+# Scale the predictor and ensure factors
 rootData <- rootData %>%
-  mutate(
-    side = factor(side),
-    Genotype = factor(Genotype)
-  )
+  mutate(root = factor(root),
+         side = factor(side),
+         Genotype = factor(Genotype)) %>%
+  group_by(root) %>%
+  mutate(Midline_scaled = (Midline - min(Midline)) / (max(Midline) - min(Midline))) %>%
+  ungroup()
 
-# Define the 4-parameter logistic model
-form4pl <- Length ~ Lmin + (Lmax - Lmin) / (1 + exp(-(Midline - xmid)/s))
+# Fit NLME model with Genotype-by-side interaction
+# 4-parameter logistic: log(Length) = L + (U - L) / (1 + exp(-(Midline_scaled - xmid) / s))
+# Random effects on xmid and s by root
+# Fixed effects: side AND Genotype:side interaction on U and xmid
 
-# Fit separate models for each Side × Genotype combination
-library(purrr)
-
-fits <- rootData %>%
-  group_by(Genotype, side) %>%
-  group_map(~ nls(
-    form4pl,
-    data = .x,
-    start = list(Lmin = 5, Lmax = 40, xmid = 800, s = 100)
-  ))
-
-# Extract parameter estimates
-params <- map_df(fits, broom::tidy, .id = "Group")
-
-# Add group labels
-group_labels <- rootData %>%
-  distinct(Genotype, side) %>%
-  mutate(Group = as.character(1:n()))
-
-params <- left_join(params, group_labels, by = "Group")
-
-print(params)
-
-```
-
-
-
-
-```{r}
-library(ggplot2)
-
-# Create predictions from the fitted curve
-pred_data <- data.frame(
-  Midline = seq(min(rootData$Midline), max(rootData$Midline), length.out = 200)
+nlme_model <- nlme(
+  log(Length) ~ L + (U - L) / (1 + exp(-(Midline_scaled - xmid) / s)),
+  data = rootData,
+  fixed = list(L ~ 1, 
+               U ~ side * Genotype, 
+               xmid ~ side * Genotype, 
+               s ~ 1),
+  random = xmid + s ~ 1 | root,
+  start = c(2,           # L intercept
+            2.5, 0, 0, 0,  # U: Intercept, side, Genotype, side:Genotype
+            0.5, 0, 0, 0,  # xmid: Intercept, side, Genotype, side:Genotype
+            0.1),          # s intercept
+  control = nlmeControl(maxIter = 200, msMaxIter = 200)
 )
-pred_data$Predicted <- predict(fixed_nls, newdata = pred_data)
 
-# Plot raw data + fitted curve
-ggplot(rootData, aes(x = Midline, y = Length)) +
-  geom_point(alpha = 0.4, size = 1, color = "steelblue") +
-  geom_line(data = pred_data, aes(x = Midline, y = Predicted), color = "darkred", size = 1.2) +
-  theme_bw() +
-  labs(
-    title = "Nonlinear (4-parameter logistic) fit of Cell Length vs. Midline Position",
-    x = "Distance along root midline (µm)",
-    y = "Cell length (µm)"
-  )
+# Model summary
+cat("Model equation:\n")
+cat("log(Length) = L + (U - L) / (1 + exp(-(Midline_scaled - xmid) / s))\n\n")
+cat("Random effects: xmid and s vary by root (allows curves to shift/stretch)\n")
+cat("Fixed effects: U and xmid vary by side AND Genotype (tests if differential growth differs by genotype)\n\n")
 
-```
+summary(nlme_model)
 
-```{r}
-library(dplyr)
+cat("\n=== KEY FOR RESEARCH QUESTION ===\n")
+cat("Look at the side:Genotype interaction terms:\n")
+cat("- If side:GenotypeMU is negative/significant for U or xmid:\n")
+cat("  → Differential growth (Inner vs Outer) is DIMINISHED in mutant\n")
+cat("- This supports the gravitropism hypothesis\n\n")
 
-# Split dataset into inner and outer groups
-inner_data <- filter(rootData, side == "Inner")
-outer_data <- filter(rootData, side == "Outer")
+# Plot fitted vs observed (back-transform predictions for plotting)
+rootData$predicted <- exp(predict(nlme_model))
 
-# Fit NLS separately
-fit_inner <- nls(Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s)),
-                 data = inner_data,
-                 start = list(Lmin = 6, Lmax = 23, xmid = 1050, s = 250))
+# Separate plots for WT and MU for better visibility
+wt_data <- filter(rootData, Genotype == "WT") %>% 
+  mutate(root = droplevels(root))
 
-fit_outer <- nls(Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s)),
-                 data = outer_data,
-                 start = list(Lmin = 6, Lmax = 23, xmid = 1050, s = 250))
+p_wt <- ggplot(wt_data, aes(x = Midline_scaled, y = Length, color = side)) +
+  geom_point(alpha = 0.4, size = 2) + 
+  geom_line(aes(y = predicted), linewidth = 1.2) +
+  facet_wrap(~ root, ncol = 3) +
+  scale_color_manual(values = c("Inner" = "#E41A1C", "Outer" = "#377EB8")) +
+  theme_bw(base_size = 12) +
+  labs(title = "Wild Type (WT) Roots", x = "Scaled Midline Position", y = "Cell Length")
 
-summary(fit_inner)
-summary(fit_outer)
+mu_data <- filter(rootData, Genotype == "MU") %>% 
+  mutate(root = droplevels(root))
 
-```
+p_mu <- ggplot(mu_data, aes(x = Midline_scaled, y = Length, color = side)) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_line(aes(y = predicted), linewidth = 1.2) +
+  facet_wrap(~ root, ncol = 3) +
+  scale_color_manual(values = c("Inner" = "#E41A1C", "Outer" = "#377EB8")) +
+  theme_bw(base_size = 12) +
+  labs(title = "Mutant (MU) Roots", x = "Scaled Midline Position", y = "Cell Length")
 
+print(p_wt)
+print(p_mu)
 
+# Residual plots
+par(mfrow = c(3, 2))
 
+# By root
+plot(nlme_model, resid(., type = "p") ~ fitted(.) | root, 
+     main = "Residuals by Root", layout = c(6, 3))
 
-```{r}
-library(nlme)
+# By genotype
+plot(nlme_model, resid(., type = "p") ~ fitted(.) | Genotype,
+     main = "Residuals by Genotype")
 
-# nlsList per root (4PL), require enough points per root
-roots_table <- split(rootData, rootData$root)
+# By side
+plot(nlme_model, resid(., type = "p") ~ fitted(.) | side,
+     main = "Residuals by Side")
 
-# nlsList expects a formula with grouping
-nls_list <- try(nlsList(Length ~ Lmin + (Lmax - Lmin)/(1 + exp(-(Midline - xmid)/s)) | root,
-                       data = rootData,
-                       start = start0,
-                       control = nls.control(maxiter=400, tol=1e-6)),
-                silent = TRUE)
+# Overall
+plot(nlme_model, resid(., type = "p") ~ fitted(.),
+     main = "Residuals vs Fitted")
 
-if(inherits(nls_list, "try-error")) {
-  message("nlsList failed. Try fitting nls per root manually to inspect problem roots.")
-} else {
-  print(summary(nls_list))
-}
+# Q-Q plot
+qqnorm(nlme_model, ~ resid(., type = "p"), main = "Normal Q-Q Plot")
 
-```
-```{r}
-library(nlme)
-library(dplyr)
-library(ggplot2)
+# By Midline
+plot(nlme_model, resid(., type = "p") ~ Midline_scaled,
+     main = "Residuals vs Scaled Midline")
 
-# assume nls_list exists (from nlsList(... | root)) and rootData exists
-# first inspect nls_list
-summary(nls_list)
-
-# 1. Try nlme using the nlsList object as start (random on Lmax only; very conservative)
-nlme_try1 <- try(nlme(nls_list,
-                      fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                      random = pdDiag(Lmax ~ 1),
-                      data = rootData,
-                      control = nlmeControl(maxIter = 200, pnlsMaxIter = 50)),
-                 silent = TRUE)
-
-if(!inherits(nlme_try1, "try-error")) {
-  nlme_fit <- nlme_try1
-  message("nlme succeeded: random on Lmax")
-} else {
-  message("nlme with random on Lmax failed. Trying random on Lmin + Lmax")
-  nlme_try2 <- try(nlme(nls_list,
-                        fixed = Lmin + Lmax + xmid + s ~ Genotype + side,
-                        random = pdDiag(Lmin + Lmax ~ 1),
-                        data = rootData,
-                        control = nlmeControl(maxIter = 200, pnlsMaxIter = 50)),
-                   silent = TRUE)
-  if(!inherits(nlme_try2, "try-error")) {
-    nlme_fit <- nlme_try2
-    message("nlme succeeded: random on Lmin + Lmax")
-  } else {
-    stop("Both nlme attempts failed. Paste the nlme error output and I'll help.")
-  }
-}
-
-# 2. Inspect fit
-summary(nlme_fit)
-VarCorr(nlme_fit)
-intervals(nlme_fit)   # confidence intervals for fixed effects & variance components
-
-# 3. Predicted curves (fixed-effects) for plotting and computing differences
-mid_grid <- seq(min(rootData$Midline), max(rootData$Midline), length.out = 200)
-pred_grid <- expand.grid(Midline = mid_grid,
-                         Genotype = levels(rootData$Genotype),
-                         side = levels(rootData$side),
-                         stringsAsFactors = FALSE)
-pred_grid$pred <- predict(nlme_fit, newdata = pred_grid, level = 0)   # fixed-effect predictions
-
-# plot
-ggplot(rootData, aes(x = Midline, y = Length, color = side)) +
-  geom_point(alpha = 0.25, size = 1.2) +
-  geom_line(data = pred_grid, aes(x = Midline, y = pred, color = side), size = 1.1) +
-  facet_wrap(~ Genotype) + theme_bw() +
-  labs(title = "NLME fixed-effect fitted curves")
-
-# 4. Compute Outer - Inner predicted difference at representative midline values
-mid_vals <- quantile(rootData$Midline, probs = c(0.25, 0.5, 0.75))
-for(g in levels(rootData$Genotype)) {
-  for(m in mid_vals) {
-    p_in  <- predict(nlme_fit, newdata = data.frame(Midline = m, Genotype = g, side = levels(rootData$side)[1]), level = 0)
-    p_out <- predict(nlme_fit, newdata = data.frame(Midline = m, Genotype = g, side = levels(rootData$side)[2]), level = 0)
-    cat("Genotype:", g, "Midline:", round(m,1), "Outer-Inner =", round(p_out - p_in,3), "\n")
-  }
-}
-
-# 5. Test whether Side and Genotype:Side matter at fixed-effect level:
-#    Compare full fixed model vs model without side (or without interaction) using anova()
-nlme_no_side <- update(nlme_fit, fixed = Lmin + Lmax + xmid + s ~ Genotype)   # drop side
-anova(nlme_fit, nlme_no_side)   # LRT for adding side
-# similarly test genotype:side interaction by fitting fixed = ~ Genotype + side (if you have interaction in fitted model, compare with smaller model)
+par(mfrow = c(1, 1))
 
 ```

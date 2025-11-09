@@ -1,4 +1,3 @@
-
 ```{r}
 library(tidyverse)
 library(minpack.lm)
@@ -67,54 +66,4 @@ plot(fitted_vals, residuals_vals,
      ylab = "Residuals",
      main = "Residuals vs Fitted")
 abline(h = 0, col = "red", lty = 2)
-
-```
-
-```{r}
-# Fitted values
-fitted_vals <- fitted(fits_by_genotype[[2]])
-
-# Residuals
-residuals_vals <- residuals(fits_by_genotype[[2]])
-plot(fitted_vals, residuals_vals,
-     xlab = "Fitted values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-```
-
-```{r}
-
-library(ggplot2)
-
-# Model 1 (WT)
-rootData_WT <- rootData[rootData$Genotype == "WT", ]
-rootData_WT$residuals <- residuals(fits_by_genotype[[2]])
-rootData_WT$fitted <- fitted(fits_by_genotype[[2]])
-
-# Model 2 (MUT)
-rootData_MU <- rootData[rootData$Genotype == "MU", ]
-rootData_MU$residuals <- residuals(fits_by_genotype[[1]])
-rootData_MU$fitted <- fitted(fits_by_genotype[[1]])
-
-# Residuals for Model 1 (WT)
-ggplot(rootData_WT, aes(x = fitted, y = residuals, color = side)) +
-  geom_point(alpha = 0.6) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  facet_wrap(~ root) +
-  theme_bw() +
-  labs(title = "Residuals for WT Model by Root",
-       x = "Midline (scaled)",
-       y = "Residuals")
-
-# Residuals for Model 2 (MUT)
-ggplot(rootData_MU, aes(x = fitted, y = residuals, color = side)) +
-  geom_point(alpha = 0.6) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  facet_wrap(~ root) +
-  theme_bw() +
-  labs(title = "Residuals for MUT Model by Root",
-       x = "Midline (scaled)",
-       y = "Residuals")
-
 ```
