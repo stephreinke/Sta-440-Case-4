@@ -1,20 +1,68 @@
-
 model {
+  # Likelihood
   for (i in 1:N) {
-    logL[i] ~ dnorm(mu[i], tau)
-    Lmax_i[i] <- Lmax0 + Lmax_gen * isMU[i] + Lmax_side * isOuter[i] + Lmax_int * isMU[i] * isOuter[i]
-    inner[i] <- Lmin + ((Lmax_i[i] - Lmin) / (1 + exp(-(Midline[i] - xmid)/s)))
-    mu[i] <- log(inner[i])
+    log_Length[i] ~ dnorm(mu[i], within.prec)
+    mu[i] <- L + (U[i] - L) / (1 + exp(-(Midline_scaled[i] - xmid[i]) / s[i]))
+
+    # fixed effects for U and xmid (side & genotype & interaction)
+    U[i] <- beta_U_int +
+            beta_U_side * side_num[i] +
+            beta_U_geno * genotype_num[i] +
+            beta_U_int_sg * side_num[i] * genotype_num[i]
+
+    xmid[i] <- beta_xmid_int +
+               beta_xmid_side * side_num[i] +
+               beta_xmid_geno * genotype_num[i] +
+               beta_xmid_int_sg * side_num[i] * genotype_num[i] +
+               b_xmid[root_num[i]]
+
+    # s positive per-root via log-scale parameterization
+    s[i] <- exp(b_s0 + b_s[root_num[i]])
   }
 
-  # Priors
-  Lmin      ~ dnorm(0, 1.0E-4)
-  Lmax0     ~ dnorm(0, 1.0E-4)
-  Lmax_gen  ~ dnorm(0, 1.0E-4)
-  Lmax_side ~ dnorm(0, 1.0E-4)
-  Lmax_int  ~ dnorm(0, 1.0E-4)
-  xmid      ~ dnorm(0, 1.0E-4)
-  s         ~ dgamma(0.1, 0.1)
-  sigma     ~ dunif(0, 20)
-  tau <- pow(sigma, -2)
+  # Random effects for xmid and for log(s)
+  for (j in 1:n_roots) {
+    b_xmid[j] ~ dnorm(0, tau_xmid)
+    b_s[j] ~ dnorm(0, tau_s)
+  }
+
+  # Priors for L (lower asymptote)
+  L ~ dunif(1, 3)
+
+  # Priors for U fixed effects
+  beta_U_int    ~ dunif(2, 4)
+  beta_U_side   ~ dnorm(0, 0.1)
+  beta_U_geno   ~ dnorm(0, 0.1)
+  beta_U_int_sg ~ dnorm(0, 0.1)
+
+  # Priors for xmid fixed effects
+  beta_xmid_int    ~ dunif(0.3, 0.7)
+  beta_xmid_side   ~ dnorm(0, 0.1)
+  beta_xmid_geno   ~ dnorm(0, 0.1)
+  beta_xmid_int_sg ~ dnorm(0, 0.1)
+
+  # Baseline for log(s)
+  b_s0 ~ dnorm(log(0.2), 1)   # prior centered at log(0.2), fairly wide
+
+  # Priors for precisions / sd parameters
+  sigma ~ dunif(0, 2)         # observation SD (log-length)
+  sigma_xmid ~ dunif(0, 1)   # SD of b_xmid
+  sigma_s ~ dunif(0, 1)      # SD of log-s random effects
+
+  within.prec <- pow(sigma, -2)
+  tau_xmid <- pow(sigma_xmid, -2)
+  tau_s <- pow(sigma_s, -2)
+
+  # Derived quantities for interpretation (side effects)
+  side_effect_WT_U   <- beta_U_side + beta_U_int_sg
+  side_effect_WT_xmid <- beta_xmid_side + beta_xmid_int_sg
+
+  side_effect_MU_U   <- beta_U_side
+  side_effect_MU_xmid <- beta_xmid_side
+
+  interaction_U <- beta_U_int_sg
+  interaction_xmid <- beta_xmid_int_sg
+
+  # Expose baseline s (on natural scale)
+  s0 <- exp(b_s0)
 }

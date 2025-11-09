@@ -1,0 +1,491 @@
+---
+title: "JagsBayes"
+format: html
+---
+# NEW ONE
+```{r}
+# ============================================================================
+# Bayesian Root Growth Model in JAGS - FULL CORRECTED SCRIPT
+# ============================================================================
+
+library(R2jags)
+library(coda)
+library(ggplot2)
+library(dplyr)
+library(loo)   # optional, used later if available
+
+# ---------------------------------------------------------------------------
+# 1. PREPARE DATA (assumes rootData exists)
+# ---------------------------------------------------------------------------
+
+rootData <- rootData %>%
+  mutate(root = factor(root),
+         side = factor(side),
+         Genotype = factor(Genotype),
+         root_num = as.numeric(root),
+         side_num = as.numeric(side) - 1,        # 0 = Inner, 1 = Outer
+         genotype_num = as.numeric(Genotype) - 1) %>%  # 0 = MU, 1 = WT
+  group_by(root) %>%
+  mutate(Midline_scaled = (Midline - min(Midline)) / (max(Midline) - min(Midline))) %>%
+  ungroup()
+
+# quick checks
+stopifnot("Length" %in% names(rootData), "Midline_scaled" %in% names(rootData))
+
+# ---------------------------------------------------------------------------
+# 2. WRITE JAGS MODEL (s per-root modelled on log scale for positivity)
+# ---------------------------------------------------------------------------
+
+cat("model {
+  # Likelihood
+  for (i in 1:N) {
+    log_Length[i] ~ dnorm(mu[i], within.prec)
+    mu[i] <- L + (U[i] - L) / (1 + exp(-(Midline_scaled[i] - xmid[i]) / s[i]))
+
+    # fixed effects for U and xmid (side & genotype & interaction)
+    U[i] <- beta_U_int +
+            beta_U_side * side_num[i] +
+            beta_U_geno * genotype_num[i] +
+            beta_U_int_sg * side_num[i] * genotype_num[i]
+
+    xmid[i] <- beta_xmid_int +
+               beta_xmid_side * side_num[i] +
+               beta_xmid_geno * genotype_num[i] +
+               beta_xmid_int_sg * side_num[i] * genotype_num[i] +
+               b_xmid[root_num[i]]
+
+    # s positive per-root via log-scale parameterization
+    s[i] <- exp(b_s0 + b_s[root_num[i]])
+  }
+
+  # Random effects for xmid and for log(s)
+  for (j in 1:n_roots) {
+    b_xmid[j] ~ dnorm(0, tau_xmid)
+    b_s[j] ~ dnorm(0, tau_s)
+  }
+
+  # Priors for L (lower asymptote)
+  L ~ dunif(1, 3)
+
+  # Priors for U fixed effects
+  beta_U_int    ~ dunif(2, 4)
+  beta_U_side   ~ dnorm(0, 0.1)
+  beta_U_geno   ~ dnorm(0, 0.1)
+  beta_U_int_sg ~ dnorm(0, 0.1)
+
+  # Priors for xmid fixed effects
+  beta_xmid_int    ~ dunif(0.3, 0.7)
+  beta_xmid_side   ~ dnorm(0, 0.1)
+  beta_xmid_geno   ~ dnorm(0, 0.1)
+  beta_xmid_int_sg ~ dnorm(0, 0.1)
+
+  # Baseline for log(s)
+  b_s0 ~ dnorm(log(0.2), 1)   # prior centered at log(0.2), fairly wide
+
+  # Priors for precisions / sd parameters
+  sigma ~ dunif(0, 2)         # observation SD (log-length)
+  sigma_xmid ~ dunif(0, 1)   # SD of b_xmid
+  sigma_s ~ dunif(0, 1)      # SD of log-s random effects
+
+  within.prec <- pow(sigma, -2)
+  tau_xmid <- pow(sigma_xmid, -2)
+  tau_s <- pow(sigma_s, -2)
+
+  # Derived quantities for interpretation (side effects)
+  side_effect_WT_U   <- beta_U_side + beta_U_int_sg
+  side_effect_WT_xmid <- beta_xmid_side + beta_xmid_int_sg
+
+  side_effect_MU_U   <- beta_U_side
+  side_effect_MU_xmid <- beta_xmid_side
+
+  interaction_U <- beta_U_int_sg
+  interaction_xmid <- beta_xmid_int_sg
+
+  # Expose baseline s (on natural scale)
+  s0 <- exp(b_s0)
+}
+", file = "rootModel.jags")
+
+# ---------------------------------------------------------------------------
+# 3. PREPARE DATA LIST FOR JAGS
+# ---------------------------------------------------------------------------
+
+jags_data <- list(
+  log_Length = log(rootData$Length),
+  Midline_scaled = rootData$Midline_scaled,
+  side_num = rootData$side_num,
+  genotype_num = rootData$genotype_num,
+  root_num = rootData$root_num,
+  N = nrow(rootData),
+  n_roots = length(unique(rootData$root))
+)
+
+# ---------------------------------------------------------------------------
+# 4. SET INITIAL VALUES (consistent with priors)
+# ---------------------------------------------------------------------------
+
+inits_function <- function() {
+  # ensure initial values are inside prior support and produce positive s[i]
+  list(
+    L = runif(1, 1.2, 2.8),                  # inside dunif(1,3)
+    beta_U_int = runif(1, 2.5, 3.5),         # inside dunif(2,4)
+    beta_U_side = rnorm(1, 0, 0.1),
+    beta_U_geno = rnorm(1, 0, 0.1),
+    beta_U_int_sg = rnorm(1, 0, 0.1),
+
+    beta_xmid_int = runif(1, 0.35, 0.65),    # inside dunif(0.3,0.7)
+    beta_xmid_side = rnorm(1, 0, 0.05),
+    beta_xmid_geno = rnorm(1, 0, 0.05),
+    beta_xmid_int_sg = rnorm(1, 0, 0.05),
+
+    # b_s0 is on log scale; center near log(0.2)
+    b_s0 = rnorm(1, log(0.2), 0.2),
+
+    sigma = runif(1, 0.05, 1.0),
+    sigma_xmid = runif(1, 0.01, 0.5),
+    sigma_s = runif(1, 0.01, 0.5),
+
+    b_xmid = rnorm(jags_data$n_roots, 0, 0.05),
+    b_s = rnorm(jags_data$n_roots, 0, 0.05)
+  )
+}
+
+# quick check of a sample init
+test_inits <- inits_function()
+stopifnot(test_inits$L >= 1 && test_inits$L <= 3)
+stopifnot(test_inits$beta_U_int >= 2 && test_inits$beta_U_int <= 4)
+
+# ---------------------------------------------------------------------------
+# 5. PARAMETERS TO MONITOR
+# ---------------------------------------------------------------------------
+
+params <- c(
+  "L",
+  "beta_U_int", "beta_U_side", "beta_U_geno", "beta_U_int_sg",
+  "beta_xmid_int", "beta_xmid_side", "beta_xmid_geno", "beta_xmid_int_sg",
+  "b_s0", "s0", "sigma", "sigma_xmid", "sigma_s",
+  "side_effect_WT_U", "side_effect_WT_xmid",
+  "side_effect_MU_U", "side_effect_MU_xmid",
+  "interaction_U", "interaction_xmid",
+  "b_xmid", "b_s"
+)
+
+# ---------------------------------------------------------------------------
+# 6. RUN JAGS
+# ---------------------------------------------------------------------------
+
+cat("Running JAGS with 4 chains...\n")
+jags_fit <- jags(
+  data = jags_data,
+  inits = inits_function,
+  parameters.to.save = params,
+  model.file = "rootModel.jags",
+  n.chains = 4,
+  n.iter = 50000,
+  n.burnin = 10000,
+  n.thin = 10,
+  DIC = TRUE,
+  progress.bar = "text"
+)
+
+print(jags_fit)
+
+# ---------------------------------------------------------------------------
+# 7. MCMC DIAGNOSTICS & convert to matrix
+# ---------------------------------------------------------------------------
+
+sims <- as.mcmc(jags_fit)
+sims_matrix <- as.matrix(sims)   # rows = draws, cols = parameter names
+
+# Gelman-Rubin
+cat("\n=== GELMAN-RUBIN ===\n")
+print(gelman.diag(sims, transform = TRUE, multivariate = FALSE))
+
+# Effective sample size
+cat("\n=== EFFECTIVE SAMPLE SIZE (first 30) ===\n")
+print(effectiveSize(sims)[1:30])
+
+# ---------------------------------------------------------------------------
+# 8. Trace + density plots (use the actual parameter names)
+# ---------------------------------------------------------------------------
+
+pdf("trace_plots_main.pdf", width = 12, height = 8)
+par(mfrow = c(3, 3))
+traceplot(sims[, c("L", "s0", "sigma", "sigma_xmid",
+                   "side_effect_WT_U", "side_effect_WT_xmid",
+                   "side_effect_MU_U", "side_effect_MU_xmid",
+                   "interaction_xmid")])
+dev.off()
+
+pdf("trace_plots_betas.pdf", width = 12, height = 8)
+par(mfrow = c(4, 2))
+traceplot(sims[, c("beta_U_int", "beta_U_side", "beta_U_geno", "beta_U_int_sg",
+                   "beta_xmid_int", "beta_xmid_side", "beta_xmid_geno", "beta_xmid_int_sg")])
+dev.off()
+
+pdf("posterior_densities.pdf", width = 12, height = 8)
+par(mfrow = c(3, 3))
+densplot(sims[, c("L", "s0", "sigma", "sigma_xmid",
+                  "side_effect_WT_U", "side_effect_WT_xmid",
+                  "side_effect_MU_U", "side_effect_MU_xmid",
+                  "interaction_xmid")])
+dev.off()
+
+# ---------------------------------------------------------------------------
+# 9. Posterior summaries & HPD
+# ---------------------------------------------------------------------------
+
+cat("\n=== POSTERIOR SUMMARY ===\n")
+print(summary(sims))
+
+cat("\n=== 95% HPD INTERVALS (first 40 rows if available) ===\n")
+hpd <- HPDinterval(sims)
+print(head(hpd[[1]], 40))
+
+# ---------------------------------------------------------------------------
+# 10. Posterior predictive predictions and residuals (posterior-mean predictions)
+# ---------------------------------------------------------------------------
+
+# Extract posterior means of scalars and random effects
+L_post <- mean(sims_matrix[, "L"])
+beta_U_int_post <- mean(sims_matrix[, "beta_U_int"])
+beta_U_side_post <- mean(sims_matrix[, "beta_U_side"])
+beta_U_geno_post <- mean(sims_matrix[, "beta_U_geno"])
+beta_U_int_sg_post <- mean(sims_matrix[, "beta_U_int_sg"])
+
+beta_xmid_int_post <- mean(sims_matrix[, "beta_xmid_int"])
+beta_xmid_side_post <- mean(sims_matrix[, "beta_xmid_side"])
+beta_xmid_geno_post <- mean(sims_matrix[, "beta_xmid_geno"])
+beta_xmid_int_sg_post <- mean(sims_matrix[, "beta_xmid_int_sg"])
+
+# random effects (b_xmid[1], ..., b_xmid[n_roots]) and b_s[1..n_roots]
+b_xmid_post <- colMeans(sims_matrix[, grep("^b_xmid\\[", colnames(sims_matrix))])
+b_s_post <- colMeans(sims_matrix[, grep("^b_s\\[", colnames(sims_matrix))])
+b_s0_post <- mean(sims_matrix[, "b_s0"])
+s0_post <- mean(sims_matrix[, "s0"])
+
+# Compute predicted quantities per observation
+rootData$U_pred <- beta_U_int_post +
+  beta_U_side_post * rootData$side_num +
+  beta_U_geno_post * rootData$genotype_num +
+  beta_U_int_sg_post * rootData$side_num * rootData$genotype_num
+
+rootData$xmid_pred <- beta_xmid_int_post +
+  beta_xmid_side_post * rootData$side_num +
+  beta_xmid_geno_post * rootData$genotype_num +
+  beta_xmid_int_sg_post * rootData$side_num * rootData$genotype_num +
+  b_xmid_post[rootData$root_num]
+
+# per-root s (positive)
+rootData$s_pred <- exp(b_s0_post + b_s_post[rootData$root_num])
+
+rootData$log_Length_pred <- L_post +
+  (rootData$U_pred - L_post) / (1 + exp(-(rootData$Midline_scaled - rootData$xmid_pred) / rootData$s_pred))
+
+rootData$Length_pred <- exp(rootData$log_Length_pred)
+rootData$residuals <- log(rootData$Length) - rootData$log_Length_pred
+
+# quick residual summary printed
+cat("\n--- Residual summary (log scale) ---\n")
+print(summary(rootData$residuals))
+
+# ---------------------------------------------------------------------------
+# 11. Residual plots & fitted vs observed
+# ---------------------------------------------------------------------------
+
+pdf("bayesian_residuals.pdf", width = 12, height = 8)
+par(mfrow = c(2, 3))
+plot(rootData$log_Length_pred, rootData$residuals,
+     main = "Residuals vs Fitted",
+     xlab = "Fitted log(Length)", ylab = "Residuals"); abline(h = 0, col = "red", lty = 2)
+
+qqnorm(rootData$residuals, main = "Normal Q-Q Plot"); qqline(rootData$residuals, col = "red")
+
+boxplot(residuals ~ Genotype, data = rootData, main = "Residuals by Genotype"); abline(h = 0, col = "red")
+boxplot(residuals ~ side, data = rootData, main = "Residuals by Side"); abline(h = 0, col = "red")
+
+plot(rootData$Midline_scaled, rootData$residuals, main = "Residuals vs Midline_scaled",
+     xlab = "Midline_scaled", ylab = "Residuals"); abline(h = 0, col = "red")
+
+hist(rootData$residuals, breaks = 30, main = "Histogram of residuals", xlab = "Residuals", col = "lightblue")
+dev.off()
+
+# fitted vs observed by Genotype plots
+p_wt_bayes <- ggplot(filter(rootData, Genotype == "WT"),
+                     aes(x = Midline_scaled, y = Length, color = side)) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_line(aes(y = Length_pred), linewidth = 1.2) +
+  facet_wrap(~ root, ncol = 3) +
+  theme_bw() + labs(title = "Bayesian Fit: WT", x = "Scaled Midline", y = "Cell Length")
+
+p_mu_bayes <- ggplot(filter(rootData, Genotype == "MU"),
+                     aes(x = Midline_scaled, y = Length, color = side)) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_line(aes(y = Length_pred), linewidth = 1.2) +
+  facet_wrap(~ root, ncol = 3) +
+  theme_bw() + labs(title = "Bayesian Fit: MU", x = "Scaled Midline", y = "Cell Length")
+
+pdf("bayesian_fitted_plots.pdf", width = 12, height = 8)
+print(p_wt_bayes); print(p_mu_bayes)
+dev.off()
+
+# ---------------------------------------------------------------------------
+# 12. Save results and print summary
+# ---------------------------------------------------------------------------
+
+cat("\n================================================================================\n")
+cat("                           ANALYSIS COMPLETE                                   \n")
+cat("================================================================================\n")
+cat("PDFs generated:\n")
+cat("  - trace_plots_main.pdf\n  - trace_plots_betas.pdf\n  - posterior_densities.pdf\n  - bayesian_residuals.pdf\n  - bayesian_fitted_plots.pdf\n")
+
+saveRDS(jags_fit, file = "jags_fit_results.rds")
+saveRDS(rootData, file = "rootData_with_preds.rds")
+
+```
+```{r}
+# ---------------------------
+# Residuals & goodness-of-fit metrics (updated to match corrected JAGS names)
+# ---------------------------
+library(loo)   # install.packages("loo") if needed
+
+stopifnot(exists("sims_matrix"), exists("rootData"), exists("jags_data"))
+N <- nrow(rootData)
+n_total_draws <- nrow(sims_matrix)
+
+# Subsample draws if very large (keeps results representative & faster)
+max_draws <- 2000
+set.seed(2025)
+draw_idx <- sample(seq_len(n_total_draws), size = min(max_draws, n_total_draws))
+
+# names for random-effect columns
+b_xmid_names <- paste0("b_xmid[", 1:jags_data$n_roots, "]")
+b_s_names    <- paste0("b_s[", 1:jags_data$n_roots, "]")
+
+# allocate storage
+n_draws <- length(draw_idx)
+logL_pred_draws <- matrix(NA_real_, nrow = n_draws, ncol = N)
+
+# compressed vectors for data
+Midline_v <- rootData$Midline_scaled
+side_v    <- rootData$side_num
+geno_v    <- rootData$genotype_num
+root_idx  <- rootData$root_num
+obs_logL  <- log(rootData$Length)
+
+# build predicted log-length per draw (posterior predictive location mu)
+for (d in seq_len(n_draws)) {
+  k <- draw_idx[d]
+  # scalar parameters in the corrected model
+  L_k              <- sims_matrix[k, "L"]
+  beta_U_int_k     <- sims_matrix[k, "beta_U_int"]
+  beta_U_side_k    <- sims_matrix[k, "beta_U_side"]
+  beta_U_geno_k    <- sims_matrix[k, "beta_U_geno"]
+  beta_U_int_sg_k  <- sims_matrix[k, "beta_U_int_sg"]
+  beta_xmid_int_k  <- sims_matrix[k, "beta_xmid_int"]
+  beta_xmid_side_k <- sims_matrix[k, "beta_xmid_side"]
+  beta_xmid_geno_k <- sims_matrix[k, "beta_xmid_geno"]
+  beta_xmid_int_sg_k <- sims_matrix[k, "beta_xmid_int_sg"]
+
+  # random effects
+  b_xmid_k <- as.numeric(sims_matrix[k, b_xmid_names])
+  b_s_k    <- as.numeric(sims_matrix[k, b_s_names])
+  b_s0_k   <- sims_matrix[k, "b_s0"]
+
+  # per-observation s (positive)
+  # s_i = exp(b_s0 + b_s[root_i])
+  s_k_vec <- exp(b_s0_k + b_s_k[root_idx])
+
+  # compute U and xmid vectors
+  U_k <- beta_U_int_k + beta_U_side_k * side_v + beta_U_geno_k * geno_v +
+         beta_U_int_sg_k * (side_v * geno_v)
+
+  xmid_k <- beta_xmid_int_k + beta_xmid_side_k * side_v + beta_xmid_geno_k * geno_v +
+            beta_xmid_int_sg_k * (side_v * geno_v) + b_xmid_k[root_idx]
+
+  # mu (vector) with elementwise division by s_k_vec
+  mu_k <- L_k + (U_k - L_k) / (1 + exp(-(Midline_v - xmid_k) / s_k_vec))
+
+  logL_pred_draws[d, ] <- mu_k
+}
+
+# posterior-mean fitted (per observation) on log-scale
+logL_postmean <- colMeans(logL_pred_draws)
+rootData$log_Length_pred_postmean <- logL_postmean
+rootData$residual_log_postmean <- obs_logL - logL_postmean
+
+# 1) Residual summary (exact like summary())
+cat("\n--- Residual summary (log scale) ---\n")
+print(summary(rootData$residual_log_postmean))
+
+# 2) RMSE & MAE (log scale) and original scale
+rmse_log <- sqrt(mean(rootData$residual_log_postmean^2))
+mae_log  <- mean(abs(rootData$residual_log_postmean))
+cat("\nRMSE (log scale):", rmse_log, "\nMAE (log scale):", mae_log, "\n")
+
+# original-scale residuals (Length - fitted median length)
+rootData$Length_pred_postmean <- exp(rootData$log_Length_pred_postmean)
+resid_orig <- rootData$Length - rootData$Length_pred_postmean
+rmse_orig <- sqrt(mean(resid_orig^2))
+mae_orig  <- mean(abs(resid_orig))
+cat("RMSE (original scale):", rmse_orig, "\nMAE (original scale):", mae_orig, "\n")
+
+# 3) Bayesian R^2 (Gelman et al. 2019) computed per posterior draw and summarized
+R2_draws <- numeric(n_draws)
+for (d in seq_len(n_draws)) {
+  mu_k <- logL_pred_draws[d, ]
+  k <- draw_idx[d]
+  sigma_k <- as.numeric(sims_matrix[k, "sigma"])
+  R2_draws[d] <- var(mu_k) / (var(mu_k) + sigma_k^2)
+}
+cat("\nBayesian R^2 summary (posterior draws):\n")
+print(quantile(R2_draws, probs = c(0.025, 0.25, 0.5, 0.75, 0.975)))
+cat("Posterior mean R^2:", mean(R2_draws), "\n")
+
+# 4) Posterior predictive p-value using SSE discrepancy
+SSE_obs <- numeric(n_draws)
+SSE_rep <- numeric(n_draws)
+for (d in seq_len(n_draws)) {
+  mu_k    <- logL_pred_draws[d, ]
+  k       <- draw_idx[d]
+  sigma_k <- as.numeric(sims_matrix[k, "sigma"])
+  SSE_obs[d] <- sum((obs_logL - mu_k)^2)
+  yrep <- rnorm(N, mean = mu_k, sd = sigma_k)
+  SSE_rep[d] <- sum((yrep - mu_k)^2)
+}
+ppp_SSE <- mean(SSE_rep > SSE_obs)
+cat("\nPosterior predictive p-value (SSE):", ppp_SSE, "\n")
+cat("  (values near 0.5 indicate good fit; extreme values indicate lack of fit)\n")
+
+# 5) Optional: compute WAIC using pointwise log-lik (may be heavy but works for subsampled draws)
+loglik_mat <- matrix(NA_real_, nrow = n_draws, ncol = N)
+for (d in seq_len(n_draws)) {
+  mu_k    <- logL_pred_draws[d, ]
+  k       <- draw_idx[d]
+  sigma_k <- as.numeric(sims_matrix[k, "sigma"])
+  loglik_mat[d, ] <- dnorm(obs_logL, mean = mu_k, sd = sigma_k, log = TRUE)
+}
+waic_res <- waic(loglik_mat)
+print(waic_res)
+
+# Save key summaries into a list for easy access
+gof_summary <- list(
+  resid_summary = summary(rootData$residual_log_postmean),
+  rmse_log = rmse_log,
+  mae_log = mae_log,
+  rmse_orig = rmse_orig,
+  mae_orig = mae_orig,
+  bayes_R2_mean = mean(R2_draws),
+  bayes_R2_quantiles = quantile(R2_draws, probs = c(0.025, 0.5, 0.975)),
+  ppp_SSE = ppp_SSE,
+  waic = waic_res
+)
+saveRDS(gof_summary, file = "bayes_gof_summary.rds")
+cat("\nSaved GOF summary to bayes_gof_summary.rds\n")
+
+```
+
+
+
+
+
