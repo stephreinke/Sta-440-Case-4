@@ -122,4 +122,5 @@ plot(nlme_model, resid(., type = "p") ~ Midline_scaled,
      main = "Residuals vs Scaled Midline")
 
 par(mfrow = c(1, 1))
+
 ```
