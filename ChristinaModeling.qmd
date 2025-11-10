@@ -99,23 +99,23 @@ print(p_mu)
 par(mfrow = c(3, 2))
 
 # By root
-plot(nlme_model, resid(., type = "p") ~ fitted(.) | root, 
+p2 <- plot(nlme_model, resid(., type = "p") ~ fitted(.) | root, 
      main = "Residuals by Root", layout = c(6, 3))
 
 # By genotype
-plot(nlme_model, resid(., type = "p") ~ fitted(.) | Genotype,
+p3 <- plot(nlme_model, resid(., type = "p") ~ fitted(.) | Genotype,
      main = "Residuals by Genotype")
 
 # By side
-plot(nlme_model, resid(., type = "p") ~ fitted(.) | side,
+p4 <- plot(nlme_model, resid(., type = "p") ~ fitted(.) | side,
      main = "Residuals by Side")
 
 # Overall
-plot(nlme_model, resid(., type = "p") ~ fitted(.),
+p5 <- plot(nlme_model, resid(., type = "p") ~ fitted(.),
      main = "Residuals vs Fitted")
 
 # Q-Q plot
-qqnorm(nlme_model, ~ resid(., type = "p"), main = "Normal Q-Q Plot")
+p6 <- qqnorm(nlme_model, ~ resid(., type = "p"), main = "Normal Q-Q Plot")
 
 # By Midline
 plot(nlme_model, resid(., type = "p") ~ Midline_scaled,
