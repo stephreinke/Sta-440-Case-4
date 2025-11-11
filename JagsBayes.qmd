@@ -482,7 +482,6 @@ gof_summary <- list(
 )
 saveRDS(gof_summary, file = "bayes_gof_summary.rds")
 cat("\nSaved GOF summary to bayes_gof_summary.rds\n")
-
 ```
 
 
