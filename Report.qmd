@@ -41,7 +41,7 @@ Where: L: lower asymptote (minimum log Length), $U_{ij}$: upper asymptote (maxim
 
 We included fixed effects for side (inner vs outer) and genotype (WT vs MU), as well as their interaction on U and xmid to test whether growth patterns differ across genotypes and sides of the root. Random effects for xmid and s were included at the root level to allow for root specific inflection points and slopes, accounting for biological variability in growth. Because residual plots from earlier indicated heteroskedasticity we log transformed our response variable (Length) to improve model fit.
 
-The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (Fig 9). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (TABLE 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (Table 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.f
+The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (Fig 9). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (Table 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (Table 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.f
 
 ```{r}
 #| label: read_data_and_EDA
@@ -219,13 +219,13 @@ b_{s,0} &\sim \mathcal{N}(\log(0.2), 1)
 
 Next, we fit a Bayesian version of our frequentist model using JAGS and MCMC sampling. Because our nonlinear growth model was complex, the dataset was relatively small (20 roots), and the data had a hierarchical structure, a Bayesian approach was beneficial to use. It allowed us to use prior knowledge about biologically reasonable parameter ranges and to obtain stable estimates through partial pooling across roots. We used the four-parameter logistic growth model to describe how cell length (after applying a log transformation) changes along the middle of the root. The model parameters represent key features of growth including the lower asymptote (L) which reflects baseline cell size near the root tip, the upper asymptote (U) which represents maximum cell length in the differentiation zone, the midpoint (xmid) which indicates where elongation is most rapid, and the scale parameter (s) which controls how steeply the transition between zones occurs. To test our main hypothesis that uneven growth between the inner and outer sides of the root causes circumnutation and that it is not present in the mutant, we included fixed effects for side, genotype, and their interaction on both the U and xmid parameters. The interaction terms directly test whether the inner-outer growth difference changes between wild-type and mutant plants. We included random effects for xmid and s (modeled on the log scale to maintain positivity) to account for variation among individual roots and within-root correlation. We also made sure to specify weakly informative priors in order to best reflect reasonable expectations in terms of biology and plants. For example, L had a Uniform(1, 3) prior, U had a Uniform(2, 4) prior to make sure mature cells are larger than the young growing cells, xmid had a Uniform(0.3, 0.7) prior to keep the midpoint within the main root region, and the log-scale parameter for s had a Normal(log(0.2), 1) prior. All side and genotype effects were given Normal(0, 10) priors, which limited extreme values but allowed effects in either direction (positive or negative). Standard deviation parameters had Uniform(0, 2) priors for observation level error and Uniform(0, 1) priors for random effect variability. In total, we ran four MCMC chains for 50,000 iterations, discarded the first 10,000 as burn-in, and retained every 10th sample, which resulted in 16,000 posterior samples.
 
-The Bayesian hierarchical model showed good convergence and fit to the data. For example, the MCMC trace plots showed good mixing across all four chains, and the Gelman-Rubin statistics were near 1.0 for all parameters (Fig 12). Effective sample sizes for all key parameters exceeded 1,300, and most of the random effects achieved ESS values between 3,000 and 8,000 (Fig 13). This shows that there was sufficient posterior sampling. Furthermore, the fitted curves of the Wild Type Roots (Fig 14) show that the model accurately captured the sigmoidal growth pattern in all nine wild-type roots. They also show a clear separation between inner (red) and outer (blue) curves, which adds to supporting the differential growth based on our research question. The residual tests (Fig 15) show that the model assumptions were met. This includes how the residuals were approximately normally distributed according to the Normal Q-Q plot, no systematic patterns being present across the fitted values or scaled midline position, and consistent variance being present across the genotypes and sides (Fig 16). Additionally, the posterior density plots (Fig 17) provided strong evidence supporting the gravitropism hypothesis. The density for the side_effect_WT_U parameter was positive and clearly separated from zero, which indicates that the wild-type roots showed a big enough differential growth, where the outer cells reached greater maximum lengths than inner cells. In contrast, the density for side_effect_MU_U was centered near zero with greater overlap, which shows that there was minimal differential growth in the mutant roots. The density for interaction_xmid showed a negative peak, which indicates that the midpoint of elongation occurred earlier on the outer side in wild-type roots compared to mutants, which is consistent with the asymmetric developmental timing mentioned in the background. The trace plots (Fig 10 & 11) for these parameters indicated stable chains with no signs of non-convergence or autocorrelation, which supports the posterior estimates. Overall, these results provide strong Bayesian evidence that differential cell elongation between the inner and outer sides of the root is emphasized in wild-type plants and reduced in the mutant genotype. This supports the conclusion that differential growth driven by gravitropism is a key feature underlying root circumnutation in rice plants.
+The Bayesian hierarchical model showed good convergence and fit to the data. For example, the MCMC trace plots showed good mixing across all four chains, and the Gelman-Rubin statistics were near 1.0 for all parameters (Table 2). Effective sample sizes for all key parameters exceeded 1,300, and most of the random effects achieved ESS values between 3,000 and 8,000 (Table 3). This shows that there was sufficient posterior sampling. Furthermore, the fitted curves of the Wild Type Roots (Fig 13) show that the model accurately captured the sigmoidal growth pattern in all nine wild-type roots. They also show a clear separation between inner (red) and outer (blue) curves, which adds to supporting the differential growth based on our research question. The residual tests (Fig 14) show that the model assumptions were met. This includes how the residuals were approximately normally distributed according to the Normal Q-Q plot, no systematic patterns being present across the fitted values or scaled midline position, and consistent variance being present across the genotypes and sides (Fig 15). Additionally, the posterior density plots (Fig 16) provided strong evidence supporting the gravitropism hypothesis. The density for the side_effect_WT_U parameter was positive and clearly separated from zero, which indicates that the wild-type roots showed a big enough differential growth, where the outer cells reached greater maximum lengths than inner cells. In contrast, the density for side_effect_MU_U was centered near zero with greater overlap, which shows that there was minimal differential growth in the mutant roots. The density for interaction_xmid showed a negative peak, which indicates that the midpoint of elongation occurred earlier on the outer side in wild-type roots compared to mutants, which is consistent with the asymmetric developmental timing mentioned in the background. The trace plots (Fig 11 & 12) for these parameters indicated stable chains with no signs of non-convergence or autocorrelation, which supports the posterior estimates. Overall, these results provide strong Bayesian evidence that differential cell elongation between the inner and outer sides of the root is emphasized in wild-type plants and reduced in the mutant genotype. This supports the conclusion that differential growth driven by gravitropism is a key feature underlying root circumnutation in rice plants.
 
 # 4. Shortcomings and Assumptions
 
 There were several important limitations and assumptions regarding our insights. The first is that the sample size was relatively small with only 20 root types. This limits statistical power and increases uncertainty around parameter estimates. This is particularly an issue with MU roots, where between root variability was higher. Another limitation is that the frequentist model we chose may have oversimplified the data. A four parameter logistic curve may oversimplify the true biological process of root growth because it assumes smooth, systematic growth along the midline. We assumed that U and L did not vary significantly across roots, which may not reflect reality. Lastly the priors that we chose for our Bayesian model were not chosen through a formal sensitivity analysis. Even though we chose weakly informative priors, they could still have constrained parameters beyond bounds seen in reality.
 
-Both modeling frameworks assume that the residuals are approximately normal with constant variance. Normality was met in both models, with QQ plots that followed the diagonal line (FIG). Residuals for our frequentist model were randomly scattered when examined all together and by side, root, and genotype (FIG). There were slight variances in range for differing roots, but all individual roots roughly followed a random scatter with roughly constant variance. Overall the residuals tended to be more concentrated at lower fitted values. This effect was more prominent in the MU roots than the WT roots.
+Both modeling frameworks assume that the residuals are approximately normal with constant variance. Normality was met in both models, with QQ plots that followed the diagonal line (Fig 8). Residuals for our frequentist model were randomly scattered when examined all together and by side, root, and genotype (Fig 4-7). There were slight variances in range for differing roots, but all individual roots roughly followed a random scatter with roughly constant variance. Overall the residuals tended to be more concentrated at lower fitted values. This effect was more prominent in the MU roots than the WT roots.
 
 # 5. Conclusion
 
@@ -290,7 +290,7 @@ knitr::kable(as.data.frame(summary(nlme_model)$tTable),
              caption = "Model output for frequentist model")
 ```
 
-```{r}
+```{r,  echo=FALSE, include=FALSE}
 # ============================================================================
 # Bayesian Root Growth Model in JAGS
 # ============================================================================
@@ -576,40 +576,33 @@ traceplot(sims[, c("beta_U_int", "beta_U_side", "beta_U_geno", "beta_U_int_sg",
                    "beta_xmid_int", "beta_xmid_side", "beta_xmid_geno", "beta_xmid_int_sg")])
 ```
 
-```{r gelman-diagnostics, echo=FALSE, fig.cap="Gelman-Rubin convergence diagnostics for main parameters"}
-# Gelman-Rubin diagnostics
-#| fig-cap: Gelman-Rubin convergence diagnostics for main parameters
-# fig 12
+```{r tab:gelman-diagnostics, echo=FALSE}
+# Table 2: Gelman-Rubin convergence diagnostics for main parameters
 library(knitr)
 
 gelman_results <- gelman.diag(sims, transform = TRUE, multivariate = FALSE)
 
-kable(gelman_results$psrf, 
+kable(gelman_results$psrf,
+      caption = "Gelman-Rubin convergence diagnostics for main parameters",
       digits = 3)
 ```
 
-```{r effective-size, echo=FALSE, fig.cap= "Effective sample sizes"}
-# Effective sample sizes 
-#| fig-cap: Effective sample sizes 
-# fig 13
+```{r tab:effective-size, echo=FALSE}
+# Table 3: Effective sample sizes
 library(knitr)
 library(kableExtra)
 
-# Compute effective sample sizes
 eff_sizes <- effectiveSize(sims)[1:30]
-
-# Convert to a data frame for kable
 eff_df <- data.frame(
   Parameter = names(eff_sizes),
   EffectiveSize = as.numeric(eff_sizes)
 )
 
-# Create a nicely formatted table
 kable(eff_df,
+      caption = "Effective sample sizes",
       digits = 1,
-      col.names = c("Parameter", "Effective Sample Size")) |>
+      col.names = c("Parameter", "Effective Sample Size")) %>%
   kable_styling(full_width = FALSE, position = "center", bootstrap_options = c("striped", "hover"))
-
 ```
 
 ```{r fig.width=12, fig.height=8, fig.cap="Bayesian fitted curves for WT genotype"}
