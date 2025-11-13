@@ -182,7 +182,7 @@ Across both frequentist and Bayesian frameworks, we found consistent evidence th
 
 Together, these findings suggest that differential elongation across root sides is a defining feature of wild-type root development and likely represents the physical mechanism underlying circumnutation. The absence of such asymmetry in mutant roots reinforces the hypothesis that the genetic mutation disrupts the gravitropic signaling or growth response necessary for this motion.
 
-#6. Appendix
+# 6. Appendix
 
 ```{r}
 #| fig-cap: The difference between inner and outer cell lengths changes root by root
