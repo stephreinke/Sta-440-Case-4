@@ -168,14 +168,14 @@ par(mfrow = c(1, 1))
 
 # 3. Bayesian Model
 
-\section\*{Main model equation}
+Main model equation
 
 \begin{align*}
 \log(\text{Length}_{ij}) &\sim \mathcal{N}(\mu_{ij}, \tau_{\text{within}})\\[1em]
 \mu_{ij} &= L + \frac{U_{ij} - L}{1 + \exp\left(-\frac{M_{ij} - \text{xmid}_{ij}}{s_{ij}}\right)}
 \end{align*}
 
-\section\*{Fixed Effects (same as frequentist)}
+Fixed Effects (same as frequentist)
 
 \textbf{Upper asymptote $(U)$:} \begin{equation*}
 U_{ij} = \beta_{U,0} + \beta_{U,\text{side}} \cdot \text{Side}_{ij} + \beta_{U,\text{geno}} \cdot \text{Genotype}_{ij} + \beta_{U,\text{side}\times\text{geno}} \cdot \text{Side}_{ij} \times \text{Genotype}_{ij}
@@ -190,14 +190,14 @@ U_{ij} = \beta_{U,0} + \beta_{U,\text{side}} \cdot \text{Side}_{ij} + \beta_{U,\
 s_{ij} = \exp(b_{s,0} + b_{s,j})
 \end{equation*}
 
-\section\*{Random Effects Priors}
+Random Effects Priors
 
 \begin{align*}
 b_{\text{xmid},j} &\sim \mathcal{N}(0, \tau_{\text{xmid}})\\[0.5em]
 b_{s,j} &\sim \mathcal{N}(0, \tau_s)
 \end{align*}
 
-\section\*{Fixed Effects Priors}
+Fixed Effects Priors
 
 \begin{align*}
 L &\sim \text{Uniform}(1, 3)\\[0.5em]
@@ -208,7 +208,7 @@ L &\sim \text{Uniform}(1, 3)\\[0.5em]
 b_{s,0} &\sim \mathcal{N}(\log(0.2), 1)
 \end{align*}
 
-\section\*{Variance Parameter Priors}
+Variance Parameter Priors
 
 \begin{align*}
 \sigma &\sim \text{Uniform}(0, 2)\\[0.5em]
