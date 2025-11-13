@@ -145,7 +145,7 @@ par(mfrow = c(3, 2))
 
 # By root
 p2 <- plot(nlme_model, resid(., type = "p") ~ fitted(.) | root, 
-     main = "Residuals by Root", layout = c(6, 3))
+     main = "Residuals by Root", layout = c(5, 4))
 
 # By genotype
 p3 <- plot(nlme_model, resid(., type = "p") ~ fitted(.) | Genotype,
@@ -247,7 +247,7 @@ plot_3
 ```
 
 ```{r}
-#| fig-cap: Residual plot
+#| fig-cap: Residual plot by root id shows variation by root with better scatters for WT
 print(p2)
 ```
 
@@ -281,8 +281,7 @@ print(p_wt)
 print(p_mu)
 ```
 
-```{r}
-#| fig-cap: Residual plot
-summary(nlme_model)$tTable |>
-  kable()
+```{r, echo=FALSE, results='asis'}
+knitr::kable(as.data.frame(summary(nlme_model)$tTable),
+             caption = "Model output for frequentist model")
 ```
