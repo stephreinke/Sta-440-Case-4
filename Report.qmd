@@ -31,11 +31,13 @@ Can the physical mechanism behind root circumnutation in the wild type plants be
 To answer these questions we examined the resulting dataset of the process described above. The dataset contains: length, midline (distance from root tip along midline), root ID ((WT)1-9 \$ (MU)1-11), side (inner or outer), and genotype (wild type (WT) & mutant (MU)) for each observation. We conducted exploratory data analysis to see how length varied by root, side, and genotype. For WT roots, there is a visible difference between inner and outer cell lengths, and this difference varies by root id (Fig 1). For MU roots, the inner and outer cell lengths tend to be similar (Fig 2). A combined analysis showed that inner and outer cell lengths are distributed the same for MU roots, while outer tends to be longer than inner cells for WT roots (Fig 3).
 
 We began with a frequentist nonlinear model to explore if Length varied by side and genotype. Our initial approach used was a seven parameter logistic curve with side and genotype effects. However, after discussion we determined that this model inappropriately assumed a constant midline across roots, which limited its biological realism. To address this issue, we refit the data using a four parameter logistic growth model with root specific random effects. The model estimates cell length (Length) as a function of scaled midline position (M): 
+
 $$
-\log(\text{Length}) = L + \frac{U - L}{1 + \exp\left(-\frac{\text{M}_{\text{scaled}} - {\text{xmid}}}{s}\right)}
+\log(\text{Length}_{ij}) = L + \frac{U_{ij} - L}{1 + \exp\left(-\frac{M_{ij} - \text{xmid}_{ij}}{s_{ij}}\right)}
 $$
 
-Where: L: lower asymptote (minimum log Length), U: upper asymptote (maximum log Length), xmid: midpoint (inflection point) of sigmoid curve, s: scale parameter
+
+Where: L: lower asymptote (minimum log Length), $U_{ij}$: upper asymptote (maximum log Length) for observation i in root j, $xmid_{ij}$: midpoint (inflection point) of sigmoid curve, $s_{ij}$: scale parameter, $M_{ij}$: scaled midline position
 
 We included fixed effects for side (inner vs outer) and genotype (WT vs MU), as well as their interaction on U and xmid to test whether growth patterns differ across genotypes and sides of the root. Random effects for xmid and s were included at the root level to allow for root specific inflection points and slopes, accounting for biological variability in growth. Because residual plots from earlier indicated heteroskedasticity we log transformed our response variable (Length) to improve model fit.
 
