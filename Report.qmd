@@ -1,5 +1,5 @@
 ---
-title: "Sta 440 Case 4"
+title: "Nonlinear Regression Models for Root Curvature - STA440 Case 4"
 author: "Christina Lee, Steph Reinke"
 date: "November 2025"
 format: 
@@ -28,20 +28,19 @@ Can the physical mechanism behind root circumnutation in the wild type plants be
 
 # 2. Data and Frequentist Model
 
-To answer these questions we examined the resulting dataset of the process described above. The dataset contains: length, midline (distance from root tip along midline), root ID ((WT)1-9 \$ (MU)1-11), side (inner or outer), and genotype (wild type (WT) & mutant (MU)) for each observation. We conducted exploratory data analysis to see how length varied by root, side, and genotype. For WT roots, there is a visible difference between inner and outer cell lengths, and this difference varies by root id (Fig 1). For MU roots, the inner and outer cell lengths tend to be similar (Fig 2). A combined analysis showed that inner and outer cell lengths are distributed the same for MU roots, while outer tends to be longer than inner cells for WT roots (Fig 3).
+To answer these questions we examined the resulting dataset of the process described above. The dataset contains: length, midline (distance from root tip along midline), root ID ((WT)1-9 and (MU)1-11), side (inner or outer), and genotype (wild type (WT) & mutant (MU)) for each observation. We conducted exploratory data analysis to see how length varied by root, side, and genotype. For WT roots, there is a visible difference between inner and outer cell lengths, and this difference varies by root id (Fig 1). For MU roots, the inner and outer cell lengths tend to be similar (Fig 2). A combined analysis showed that inner and outer cell lengths are distributed the same for MU roots, while outer tends to be longer than inner cells for WT roots (Fig 3).
 
-We began with a frequentist nonlinear model to explore if Length varied by side and genotype. Our initial approach used was a seven parameter logistic curve with side and genotype effects. However, after discussion we determined that this model inappropriately assumed a constant midline across roots, which limited its biological realism. To address this issue, we refit the data using a four parameter logistic growth model with root specific random effects. The model estimates cell length (Length) as a function of scaled midline position (M): 
+We began with a frequentist nonlinear model to explore if Length varied by side and genotype. Our initial approach used was a seven parameter logistic curve with side and genotype effects. However, after discussion we determined that this model inappropriately assumed a constant midline across roots, which limited its biological realism. To address this issue, we refit the data using a four parameter logistic growth model with root specific random effects. The model estimates cell length (Length) as a function of scaled midline position (M):
 
 $$
 \log(\text{Length}_{ij}) = L + \frac{U_{ij} - L}{1 + \exp\left(-\frac{M_{ij} - \text{xmid}_{ij}}{s_{ij}}\right)}
 $$
 
-
 Where: L: lower asymptote (minimum log Length), $U_{ij}$: upper asymptote (maximum log Length) for observation i in root j, $xmid_{ij}$: midpoint (inflection point) of sigmoid curve, $s_{ij}$: scale parameter, $M_{ij}$: scaled midline position
 
 We included fixed effects for side (inner vs outer) and genotype (WT vs MU), as well as their interaction on U and xmid to test whether growth patterns differ across genotypes and sides of the root. Random effects for xmid and s were included at the root level to allow for root specific inflection points and slopes, accounting for biological variability in growth. Because residual plots from earlier indicated heteroskedasticity we log transformed our response variable (Length) to improve model fit.
 
-The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (Fig 9). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (Table 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (Table 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.f
+The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (Fig 9). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (Table 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (Table 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.
 
 ```{r}
 #| label: read_data_and_EDA
@@ -169,14 +168,14 @@ par(mfrow = c(1, 1))
 
 # 3. Bayesian Model
 
-\section*{Main model equation}
+\section\*{Main model equation}
 
 \begin{align*}
 \log(\text{Length}_{ij}) &\sim \mathcal{N}(\mu_{ij}, \tau_{\text{within}})\\[1em]
 \mu_{ij} &= L + \frac{U_{ij} - L}{1 + \exp\left(-\frac{M_{ij} - \text{xmid}_{ij}}{s_{ij}}\right)}
 \end{align*}
 
-\section*{Fixed Effects (same as frequentist)}
+\section\*{Fixed Effects (same as frequentist)}
 
 \textbf{Upper asymptote $(U)$:} \begin{equation*}
 U_{ij} = \beta_{U,0} + \beta_{U,\text{side}} \cdot \text{Side}_{ij} + \beta_{U,\text{geno}} \cdot \text{Genotype}_{ij} + \beta_{U,\text{side}\times\text{geno}} \cdot \text{Side}_{ij} \times \text{Genotype}_{ij}
@@ -191,14 +190,14 @@ U_{ij} = \beta_{U,0} + \beta_{U,\text{side}} \cdot \text{Side}_{ij} + \beta_{U,\
 s_{ij} = \exp(b_{s,0} + b_{s,j})
 \end{equation*}
 
-\section*{Random Effects Priors}
+\section\*{Random Effects Priors}
 
 \begin{align*}
 b_{\text{xmid},j} &\sim \mathcal{N}(0, \tau_{\text{xmid}})\\[0.5em]
 b_{s,j} &\sim \mathcal{N}(0, \tau_s)
 \end{align*}
 
-\section*{Fixed Effects Priors}
+\section\*{Fixed Effects Priors}
 
 \begin{align*}
 L &\sim \text{Uniform}(1, 3)\\[0.5em]
@@ -209,7 +208,7 @@ L &\sim \text{Uniform}(1, 3)\\[0.5em]
 b_{s,0} &\sim \mathcal{N}(\log(0.2), 1)
 \end{align*}
 
-\section*{Variance Parameter Priors}
+\section\*{Variance Parameter Priors}
 
 \begin{align*}
 \sigma &\sim \text{Uniform}(0, 2)\\[0.5em]
@@ -227,7 +226,7 @@ There were several important limitations and assumptions regarding our insights.
 
 # 5. Conclusion
 
-Across both frequentist and Bayesian frameworks, we found consistent evidence that wild-type (WT) roots exhibit significant asymmetry in cell elongation, while mutant (MU) roots do not. The frequentist nonlinear mixed-effects model revealed that the inflection point (xmid) occurred significantly closer to the root base on the outer side for WT roots, suggesting earlier elongation onset relative to the inner side. In contrast, MU roots showed no such difference. The Bayesian hierarchical model corroborated these findings, providing strong posterior support that outer-side cells in WT roots achieved larger maximum lengths (U) and earlier elongation midpoints (xmid) than inner-side cells, consistent with asymmetric growth driving circumnutation. Together, these findings suggest that differential elongation across root sides is a defining feature of wild-type root development and likely represents the physical mechanism underlying circumnutation. The absence of such asymmetry in mutant roots reinforces the hypothesis that the genetic mutation disrupts the gravitropic signaling or growth response necessary for this motion.
+Across both frequentist and Bayesian frameworks, we found consistent evidence that wild-type (WT) roots exhibit significant asymmetry in cell elongation, while mutant (MU) roots do not. The frequentist nonlinear mixed-effects model revealed that the inflection point (xmid) occurred significantly closer to the root base on the outer side for WT roots, suggesting earlier elongation onset relative to the inner side. In contrast, MU roots showed no such difference. The Bayesian hierarchical model corroborated these findings, providing strong posterior support that outer-side cells in WT roots achieved larger maximum lengths (U) and earlier elongation midpoints (xmid) than inner-side cells, consistent with asymmetric growth driving circumnutation. Together, these findings suggest that differential elongation across root sides is a defining feature of wild-type root development and likely represents the physical mechanism underlying circumnutation. The absence of the asymmetry in mutant roots reinforces the hypothesis that the genetic mutation affects the gravitropic growth needed for this motion.
 
 # 6. Appendix
 
@@ -550,7 +549,6 @@ print(head(hpd[[1]], 40))
 saveRDS(jags_fit, file = "jags_fit_results.rds")
 saveRDS(rootData, file = "rootData_with_preds.rds")
 ```
-
 
 ```{r fig.width=10, fig.height=8, fig.cap="Trace plots for main parameters"}
 #| fig-cap: Trace plots for main parameters
