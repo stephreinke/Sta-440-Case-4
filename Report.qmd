@@ -30,7 +30,8 @@ Can the physical mechanism behind root circumnutation in the wild type plants be
 
 To answer these questions we examined the resulting dataset of the process described above. The dataset contains: length, midline (distance from root tip along midline), root ID ((WT)1-9 \$ (MU)1-11), side (inner or outer), and genotype (wild type (WT) & mutant (MU)) for each observation. We conducted exploratory data analysis to see how length varied by root, side, and genotype. For WT roots, there is a visible difference between inner and outer cell lengths, and this difference varies by root id (Fig 1). For MU roots, the inner and outer cell lengths tend to be similar (Fig 2). A combined analysis showed that inner and outer cell lengths are distributed the same for MU roots, while outer tends to be longer than inner cells for WT roots (Fig 3).
 
-We began with a frequentist nonlinear model to explore if Length varied by side and genotype. Our initial approach used was a seven parameter logistic curve with side and genotype effects. However, after discussion we determined that this model inappropriately assumed a constant midline across roots, which limited its biological realism. To address this issue, we refit the data using a four parameter logistic growth model with root specific random effects. The model estimates cell length (Length) as a function of scaled midline position (M): $$
+We began with a frequentist nonlinear model to explore if Length varied by side and genotype. Our initial approach used was a seven parameter logistic curve with side and genotype effects. However, after discussion we determined that this model inappropriately assumed a constant midline across roots, which limited its biological realism. To address this issue, we refit the data using a four parameter logistic growth model with root specific random effects. The model estimates cell length (Length) as a function of scaled midline position (M): 
+$$
 \log(\text{Length}) = L + \frac{U - L}{1 + \exp\left(-\frac{\text{M}_{\text{scaled}} - {\text{xmid}}}{s}\right)}
 $$
 
@@ -38,7 +39,7 @@ Where: L: lower asymptote (minimum log Length), U: upper asymptote (maximum log 
 
 We included fixed effects for side (inner vs outer) and genotype (WT vs MU), as well as their interaction on U and xmid to test whether growth patterns differ across genotypes and sides of the root. Random effects for xmid and s were included at the root level to allow for root specific inflection points and slopes, accounting for biological variability in growth. Because residual plots from earlier indicated heteroskedasticity we log transformed our response variable (Length) to improve model fit.
 
-The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (FIG 9 & 10). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (TABLE 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (TABLE 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.
+The model was fit using the nlme package in R. Convergence was achieved by extending the max iterations to 200. Residuals versus fitted values by genotype, side, and root do not show any systematic structure (Fig 4-7). The QQ plot of the residuals followed the diagonal line suggesting that normality was met (Fig 8). The predicted curves by side (outer vs inner) were plotted against the data, which showed goodness of fit. No visible difference could be seen between the two MU curves, but the outer curve had consistently larger lengths for the WT (Fig 9). The key parameters are the side and genotype interaction terms for U and xmid. The estimated coefficient for the interaction between side, genotype and U was negative, but not statistically significant (p-value of 0.5603) (TABLE 1). The estimated coefficient for the interaction between side, genotype, and xmid was negative and statistically significant (p-value of \<0.001) (Table 1). This suggests that for WT roots the inflection point occurs closer to the root base on the outer side compared to the inner side and compared to MU roots. Thus supporting differential patterns of cell growth by side and genotype.f
 
 ```{r}
 #| label: read_data_and_EDA
@@ -550,7 +551,6 @@ print(head(hpd[[1]], 40))
 # Save results
 saveRDS(jags_fit, file = "jags_fit_results.rds")
 saveRDS(rootData, file = "rootData_with_preds.rds")
-```
 ```
 
 
