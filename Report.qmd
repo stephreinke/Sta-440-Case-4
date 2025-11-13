@@ -217,7 +217,7 @@ b_{s,0} &\sim \mathcal{N}(\log(0.2), 1)
 
 Next, we fit a Bayesian version of our frequentist model using JAGS and MCMC sampling. Because our nonlinear growth model was complex, the dataset was relatively small (20 roots), and the data had a hierarchical structure, a Bayesian approach was beneficial to use. It allowed us to use prior knowledge about biologically reasonable parameter ranges and to obtain stable estimates through partial pooling across roots. We used the four-parameter logistic growth model to describe how cell length (after applying a log transformation) changes along the middle of the root. The model parameters represent key features of growth including the lower asymptote (L) which reflects baseline cell size near the root tip, the upper asymptote (U) which represents maximum cell length in the differentiation zone, the midpoint (xmid) which indicates where elongation is most rapid, and the scale parameter (s) which controls how steeply the transition between zones occurs. To test our main hypothesis that uneven growth between the inner and outer sides of the root causes circumnutation and that it is not present in the mutant, we included fixed effects for side, genotype, and their interaction on both the U and xmid parameters. The interaction terms directly test whether the inner-outer growth difference changes between wild-type and mutant plants. We included random effects for xmid and s (modeled on the log scale to maintain positivity) to account for variation among individual roots and within-root correlation. We also made sure to specify weakly informative priors in order to best reflect reasonable expectations in terms of biology and plants. For example, L had a Uniform(1, 3) prior, U had a Uniform(2, 4) prior to make sure mature cells are larger than the young growing cells, xmid had a Uniform(0.3, 0.7) prior to keep the midpoint within the main root region, and the log-scale parameter for s had a Normal(log(0.2), 1) prior. All side and genotype effects were given Normal(0, 10) priors, which limited extreme values but allowed effects in either direction (positive or negative). Standard deviation parameters had Uniform(0, 2) priors for observation level error and Uniform(0, 1) priors for random effect variability. In total, we ran four MCMC chains for 50,000 iterations, discarded the first 10,000 as burn-in, and retained every 10th sample, which resulted in 16,000 posterior samples.
 
-The Bayesian hierarchical model showed good convergence and fit to the data. For example, the MCMC trace plots showed good mixing across all four chains, and the Gelman-Rubin statistics were near 1.0 for all parameters (Fig 15). Effective sample sizes for all key parameters exceeded 1,300, and most of the random effects achieved ESS values between 3,000 and 8,000 (Fig 16). This shows that there was sufficient posterior sampling. Furthermore, the fitted curves of the Wild Type Roots (Fig 17) show that the model accurately captured the sigmoidal growth pattern in all nine wild-type roots. They also show a clear separation between inner (red) and outer (blue) curves, which adds to supporting the differential growth based on our research question. The residual tests (Fig 18) show that the model assumptions were met. This includes how the residuals were approximately normally distributed according to the Normal Q-Q plot, no systematic patterns being present across the fitted values or scaled midline position, and consistent variance being present across the genotypes and sides (Fig 19). Additionally, the posterior density plots (Fig 20) provided strong evidence supporting the gravitropism hypothesis. The density for the side_effect_WT_U parameter was positive and clearly separated from zero, which indicates that the wild-type roots showed a big enough differential growth, where the outer cells reached greater maximum lengths than inner cells. In contrast, the density for side_effect_MU_U was centered near zero with greater overlap, which shows that there was minimal differential growth in the mutant roots. The density for interaction_xmid showed a negative peak, which indicates that the midpoint of elongation occurred earlier on the outer side in wild-type roots compared to mutants, which is consistent with the asymmetric developmental timing mentioned in the background. The trace plots (Fig 13 & 14) for these parameters indicated stable chains with no signs of non-convergence or autocorrelation, which supports the posterior estimates. Overall, these results provide strong Bayesian evidence that differential cell elongation between the inner and outer sides of the root is emphasized in wild-type plants and reduced in the mutant genotype. This supports the conclusion that differential growth driven by gravitropism is a key feature underlying root circumnutation in rice plants.
+The Bayesian hierarchical model showed good convergence and fit to the data. For example, the MCMC trace plots showed good mixing across all four chains, and the Gelman-Rubin statistics were near 1.0 for all parameters (Fig 12). Effective sample sizes for all key parameters exceeded 1,300, and most of the random effects achieved ESS values between 3,000 and 8,000 (Fig 13). This shows that there was sufficient posterior sampling. Furthermore, the fitted curves of the Wild Type Roots (Fig 14) show that the model accurately captured the sigmoidal growth pattern in all nine wild-type roots. They also show a clear separation between inner (red) and outer (blue) curves, which adds to supporting the differential growth based on our research question. The residual tests (Fig 15) show that the model assumptions were met. This includes how the residuals were approximately normally distributed according to the Normal Q-Q plot, no systematic patterns being present across the fitted values or scaled midline position, and consistent variance being present across the genotypes and sides (Fig 16). Additionally, the posterior density plots (Fig 17) provided strong evidence supporting the gravitropism hypothesis. The density for the side_effect_WT_U parameter was positive and clearly separated from zero, which indicates that the wild-type roots showed a big enough differential growth, where the outer cells reached greater maximum lengths than inner cells. In contrast, the density for side_effect_MU_U was centered near zero with greater overlap, which shows that there was minimal differential growth in the mutant roots. The density for interaction_xmid showed a negative peak, which indicates that the midpoint of elongation occurred earlier on the outer side in wild-type roots compared to mutants, which is consistent with the asymmetric developmental timing mentioned in the background. The trace plots (Fig 10 & 11) for these parameters indicated stable chains with no signs of non-convergence or autocorrelation, which supports the posterior estimates. Overall, these results provide strong Bayesian evidence that differential cell elongation between the inner and outer sides of the root is emphasized in wild-type plants and reduced in the mutant genotype. This supports the conclusion that differential growth driven by gravitropism is a key feature underlying root circumnutation in rice plants.
 
 # 4. Shortcomings and Assumptions
 
@@ -290,7 +290,7 @@ knitr::kable(as.data.frame(summary(nlme_model)$tTable),
 
 ```{r}
 # ============================================================================
-# Bayesian Root Growth Model in JAGS - FULL CORRECTED SCRIPT
+# Bayesian Root Growth Model in JAGS
 # ============================================================================
 
 library(R2jags)
@@ -555,8 +555,8 @@ saveRDS(rootData, file = "rootData_with_preds.rds")
 
 
 ```{r fig.width=10, fig.height=8, fig.cap="Trace plots for main parameters"}
-#| fig-cap: CAP
-# fig 13
+#| fig-cap: Trace plots for main parameters
+# fig 10
 # Trace plots - main parameters
 par(mfrow = c(3, 3))
 traceplot(sims[, c("L", "s0", "sigma", "sigma_xmid",
@@ -566,8 +566,8 @@ traceplot(sims[, c("L", "s0", "sigma", "sigma_xmid",
 ```
 
 ```{r fig.width=10, fig.height=8, fig.cap="Trace plots for beta parameters"}
-#| fig-cap: CAP
-# fig 14
+#| fig-cap: Trace plots for beta parameters
+# fig 11
 # Trace plots - betas
 par(mfrow = c(4, 2))
 traceplot(sims[, c("beta_U_int", "beta_U_side", "beta_U_geno", "beta_U_int_sg",
@@ -577,7 +577,7 @@ traceplot(sims[, c("beta_U_int", "beta_U_side", "beta_U_geno", "beta_U_int_sg",
 ```{r gelman-diagnostics, echo=FALSE, fig.cap="Gelman-Rubin convergence diagnostics for main parameters"}
 # Gelman-Rubin diagnostics
 #| fig-cap: Gelman-Rubin convergence diagnostics for main parameters
-# fig 14
+# fig 12
 library(knitr)
 
 gelman_results <- gelman.diag(sims, transform = TRUE, multivariate = FALSE)
@@ -586,12 +586,10 @@ kable(gelman_results$psrf,
       digits = 3)
 ```
 
-# Appendix
-
-```{r effective-size, echo=FALSE}
+```{r effective-size, echo=FALSE, fig.cap= "Effective sample sizes"}
 # Effective sample sizes 
 #| fig-cap: Effective sample sizes 
-# fig 16
+# fig 13
 library(knitr)
 library(kableExtra)
 
@@ -615,7 +613,7 @@ kable(eff_df,
 ```{r fig.width=12, fig.height=8, fig.cap="Bayesian fitted curves for WT genotype"}
 # Fitted vs observed - WT
 #| fig-cap: Bayesian fitted curves for WT genotype
-# fig 17
+# fig 14
 p_wt_bayes <- ggplot(filter(rootData, Genotype == "WT"),
                      aes(x = Midline_scaled, y = Length, color = side)) +
   geom_point(alpha = 0.4, size = 2) +
@@ -628,7 +626,7 @@ print(p_wt_bayes)
 
 ```{r fig.width=10, fig.height=3, fig.cap="Residuals vs Fitted"}
 #| fig-cap: Residuals vs Fitted
-# fig 18
+# fig 15
 par(mfrow = c(1, 3))
 plot(rootData$log_Length_pred, rootData$residuals,
      main = "Residuals vs Fitted",
@@ -644,7 +642,7 @@ hist(rootData$residuals, breaks = 30, main = "Histogram of residuals",
 
 ```{r fig.width=10, fig.height=3, fig.cap="Residuals by grouping variables"}
 #| fig-cap: Residuals by grouping variables
-# fig 19
+# fig 16
 par(mfrow = c(1, 3))
 boxplot(residuals ~ Genotype, data = rootData, main = "Residuals by Genotype")
 abline(h = 0, col = "red")
@@ -660,7 +658,7 @@ abline(h = 0, col = "red")
 
 ```{r fig.width=10, fig.height=8, fig.cap="Posterior density plots"}
 #| fig-cap: Posterior density plots
-# fig 20
+# fig 17
 # Posterior densities
 par(mfrow = c(3, 3))
 densplot(sims[, c("L", "s0", "sigma", "sigma_xmid",
